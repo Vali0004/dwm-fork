@@ -41,7 +41,7 @@ void exitdwm ()
 		"echo \""
 			S_FORMAT (LOCK) "\n"
 			S_FORMAT (RESTART_DWM) "\n"
-			S_FORMAT (OFFSCREEN) "\n"
+			S_FORMAT (SLEEP) "\n"
 			S_FORMAT (EXIT) "\n"
 			S_FORMAT (REBOOT) "\n"
 			S_FORMAT (SHUTDOWN)
