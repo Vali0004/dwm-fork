@@ -248,6 +248,7 @@ static void sighup(int unused);
 static void sigterm(int unused);
 static void tag(const Arg *arg);
 static void tagmon(const Arg *arg);
+static void shifttag(const Arg *arg);
 static void togglebar(const Arg *arg);
 static void togglefloating(const Arg *arg);
 static void togglefullscr(const Arg *arg);
@@ -2061,6 +2062,27 @@ tagmon(const Arg *arg)
 	if (!selmon->sel || !mons->next)
 		return;
 	sendmon(selmon->sel, dirtomon(arg->i));
+}
+
+void
+shifttag(const Arg *arg)
+{
+    if (!selmon->sel)
+        return;
+
+    unsigned int tagmask = selmon->sel->tags;
+    if (arg->i > 0) {
+        tagmask = tagmask << arg->i;
+    } else {
+        tagmask = tagmask >> (-arg->i);
+    }
+
+    // Wrap around if out of bounds
+    if (tagmask >= (1 << LENGTH(tags)))
+        tagmask = 1;
+
+    selmon->sel->tags = tagmask;
+    arrange(selmon);
 }
 
 void
