@@ -15,8 +15,8 @@ static const char *altbarclass        = "Polybar";       /* Alternate bar class 
 static const char *altbarcmd          = "";              /* Alternate bar launch command */
 static const char *fonts[]            = { "monospace:size=10" };
 static const char dmenufont[]         = "monospace:size=10";
-static const char col_gray1[]         = "#222222";
-static const char col_gray2[]         = "#444444";
+static const char col_gray1[]         = "#0F0F0F";
+static const char col_gray2[]         = "#3B3B3B";
 static const char col_gray3[]         = "#bbbbbb";
 static const char col_gray4[]         = "#eeeeee";
 static const char col_cyan[]          = "#005577";
@@ -25,7 +25,7 @@ static const unsigned int borderalpha = OPAQUE;
 static const char *colors[][3]      = {
 	/*               fg         bg         border   */
 	[SchemeNorm] = { col_gray3, col_gray1, col_gray2 },
-	[SchemeSel]  = { col_gray4, col_cyan,  col_cyan  },
+	[SchemeSel]  = { col_gray4, col_gray1, col_gray1  },
 };
 static const unsigned int alphas[][3]      = {
     /*               fg      bg        border*/
@@ -111,7 +111,7 @@ static const Key keys[] = {
 	{ MODKEY,                       XK_j,                     focusstack,     {.i = +1} },
 	{ MODKEY,                       XK_k,                     focusstack,     {.i = -1} },
 	{ MODKEY,                       XK_i,                     incnmaster,     {.i = +1} },
-	{ MODKEY,                       XK_d,                     incnmaster,     {.i = -1} },
+	{ MODKEY,                       XK_p,                     incnmaster,     {.i = -1} },
 	{ MODKEY,                       XK_h,                     setmfact,       {.f = -0.05} },
 	{ MODKEY,                       XK_l,                     setmfact,       {.f = +0.05} },
 	{ MODKEY|ShiftMask,             XK_h,                     setcfact,       {.f = +0.25} },
@@ -123,6 +123,7 @@ static const Key keys[] = {
 	{ MODKEY,                       XK_n,                     setlayout,      {.v = &layouts[1]} },
 	{ MODKEY,                       XK_m,                     setlayout,      {.v = &layouts[2]} },
 	{ MODKEY,                       XK_g,                     setlayout,      {.v = &layouts[3]} },
+	{ MODKEY|ShiftMask,             XK_g,                     setlayout,      {.v = &layouts[4]} },
 	{ MODKEY,                       XK_space,                 setlayout,      {0} },
 	{ MODKEY,                       XK_f,                     togglefloating, {0} },
 	{ MODKEY|ShiftMask,             XK_f,                     togglefullscr,  {0} },
