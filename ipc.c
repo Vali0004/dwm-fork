@@ -1073,7 +1073,7 @@ ipc_focused_title_change_event(const int mon_num, const Window client_id,
 }
 
 void
-ipc_focused_state_change_event(const int mon_num, const Window client_id,
+ipc_focused_state_change_eventlastlt(const int mon_num, const Window client_id,
                                const ClientState *old_state,
                                const ClientState *new_state)
 {

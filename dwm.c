@@ -154,6 +154,7 @@ struct Monitor {
 	Monitor *next;
 	Window barwin;
 	const Layout *lt[2];
+	const Layout *lastlt;
 };
 
 typedef struct {
@@ -319,6 +320,8 @@ static int useargb = 0;
 static Visual *visual;
 static int depth;
 static Colormap cmap;
+
+#include "ipc.h"
 
 /* configuration, allows nested code to access above variables */
 #include "config.h"
@@ -1599,8 +1602,9 @@ runautostart(void)
 		free(pathpfx);
 	}
 
-	if (access(path, X_OK) == 0)
-		system(path);
+	if (access(path, X_OK) == 0) {
+		(void)system(path);
+	}
 
 	/* now the non-blocking script */
 	if (sprintf(path, "%s/%s", pathpfx, autostartsh) <= 0) {
@@ -1609,7 +1613,7 @@ runautostart(void)
 	}
 
 	if (access(path, X_OK) == 0)
-		system(strcat(path, " &"));
+		(void)system(strcat(path, " &"));
 
 	free(pathpfx);
 	free(path);
@@ -1680,7 +1684,7 @@ void
 setdesktopnames(void)
 {
 	XTextProperty text;
-	Xutf8TextListToTextProperty(dpy, tags, TAGSLENGTH, XUTF8StringStyle, &text);
+	Xutf8TextListToTextProperty(dpy, (char **)tags, TAGSLENGTH, XUTF8StringStyle, &text);
 	XSetTextProperty(dpy, root, &text, netatom[NetDesktopNames]);
 }
 
@@ -2032,7 +2036,7 @@ void
 spawnbar()
 {
 	if (*altbarcmd)
-		system(altbarcmd);
+		(void)system(altbarcmd);
 }
 
 void
@@ -2223,7 +2227,7 @@ updatecurrentdesktop(void)
 {
 	long rawdata[] = { selmon->tagset[selmon->seltags] };
 	int i = 0;
-	while (*rawdata >> i + 1)
+	while (*rawdata >> (i + 1))
 		i++;
 
 	long data[] = { i };

@@ -1,7 +1,8 @@
 # include <stdio.h>
 # include <string.h>
 
-void exitdwm ()
+void
+exitdwm(void)
 {
 # if							   \
 	defined S_LOCK				|| \
@@ -52,23 +53,21 @@ void exitdwm ()
 
 	char exit_action [16];
 
-	if (
-		exit_menu == NULL ||
-		fscanf (exit_menu, "%15[a-zA-Z -]", exit_action) == EOF
-	) {
-		fputs ("Error. Failure in exit_dwm.", stderr);
+	if (exit_menu == NULL || fscanf(exit_menu, "%15[a-zA-Z -]", exit_action) == EOF)
+	{
+		fputs("Error. Failure in exit_dwm.", stderr);
 		goto close_streams;
 	}
 
-	if (strcmp (exit_action, S_LOCK) == 0) system ("slock & sleep .5; xset dpms force off");
-	else if (strcmp (exit_action, S_RESTART_DWM) == 0) quit (& (const Arg) {1});
-	else if (strcmp (exit_action, S_SLEEP) == 0) system ("sleep .5; xset dpms force off");
-	else if (strcmp (exit_action, S_EXIT) == 0) quit (& (const Arg) {0});
-	else if (strcmp (exit_action, S_REBOOT) == 0) system ("systemctl reboot");
-	else if (strcmp (exit_action, S_SHUTDOWN) == 0) system ("systemctl poweroff -i");
+	if (strcmp(exit_action, S_LOCK) == 0) (void)system("slock & sleep .5; xset dpms force off");
+	else if (strcmp(exit_action, S_RESTART_DWM) == 0) quit(& (const Arg) {1});
+	else if (strcmp(exit_action, S_SLEEP) == 0) (void)system("sleep .5; xset dpms force off");
+	else if (strcmp(exit_action, S_EXIT) == 0) quit(& (const Arg) {0});
+	else if (strcmp(exit_action, S_REBOOT) == 0) (void)system("systemctl reboot");
+	else if (strcmp(exit_action, S_SHUTDOWN) == 0) (void)system("systemctl poweroff -i");
 
 close_streams:
-	pclose (exit_menu);
+	pclose(exit_menu);
 
 # undef S_LOCK
 # undef S_RESTART_DWM
