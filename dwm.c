@@ -248,7 +248,7 @@ static void sighup(int unused);
 static void sigterm(int unused);
 static void tag(const Arg *arg);
 static void tagmon(const Arg *arg);
-static void shifttag(const Arg *arg);
+static void movestack(const Arg *arg);
 static void togglebar(const Arg *arg);
 static void togglefloating(const Arg *arg);
 static void togglefullscr(const Arg *arg);
@@ -2065,23 +2065,52 @@ tagmon(const Arg *arg)
 }
 
 void
-shifttag(const Arg *arg)
+insertclient(Client *c, Client *prev)
 {
-    if (!selmon->sel)
+    if (!prev) {
+        c->next = selmon->clients;
+        selmon->clients = c;
+    } else {
+        c->next = prev->next;
+        prev->next = c;
+    }
+}
+
+Client *
+findprev(Client *c)
+{
+    Client *p = NULL;
+    for (Client *i = selmon->clients; i && i != c; i = i->next)
+        p = i;
+    return p;
+}
+
+void
+movestack(const Arg *arg)
+{
+    Client *c = NULL, *pc = NULL, *i;
+
+    if (!selmon->sel || selmon->sel->isfloating)
         return;
 
-    unsigned int tagmask = selmon->sel->tags;
     if (arg->i > 0) {
-        tagmask = tagmask << arg->i;
+        // Move down in stack
+        for (c = selmon->sel->next; c && (!ISVISIBLE(c) || c->isfloating); c = c->next);
+        if (!c)
+            return;
+        detach(selmon->sel);
+        insertclient(selmon->sel, c);
     } else {
-        tagmask = tagmask >> (-arg->i);
+        // Move up in stack — find the previous visible & tiled client
+        for (i = selmon->clients; i && i != selmon->sel; i = i->next)
+            if (ISVISIBLE(i) && !i->isfloating)
+                pc = i;
+        if (!pc)
+            return;
+        detach(selmon->sel);
+        insertclient(selmon->sel, pc == selmon->clients ? NULL : findprev(selmon->sel));
     }
 
-    // Wrap around if out of bounds
-    if (tagmask >= (1 << LENGTH(tags)))
-        tagmask = 1;
-
-    selmon->sel->tags = tagmask;
     arrange(selmon);
 }
 
