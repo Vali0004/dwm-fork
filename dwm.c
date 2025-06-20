@@ -1602,8 +1602,9 @@ runautostart(void)
 		free(pathpfx);
 	}
 
+	int res = 0;
 	if (access(path, X_OK) == 0) {
-		(void)system(path);
+		res = system(path);
 	}
 
 	/* now the non-blocking script */
@@ -1613,7 +1614,9 @@ runautostart(void)
 	}
 
 	if (access(path, X_OK) == 0)
-		(void)system(strcat(path, " &"));
+		res = system(strcat(path, " &"));
+
+	(void)res;
 
 	free(pathpfx);
 	free(path);
@@ -2035,8 +2038,10 @@ tagmon(const Arg *arg)
 void
 spawnbar()
 {
-	if (*altbarcmd)
-		(void)system(altbarcmd);
+	if (*altbarcmd) {
+		int res = system(altbarcmd);
+		(void)res;
+	}
 }
 
 void
