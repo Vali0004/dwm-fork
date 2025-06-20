@@ -1407,7 +1407,8 @@ propertynotify(XEvent *e)
 void
 quit(const Arg *arg)
 {
-	if(arg->i) restart = 1;
+	if (arg->i)
+		restart = 1;
 	running = 0;
 }
 
@@ -2700,7 +2701,8 @@ main(int argc, char *argv[])
 	scan();
 	runautostart();
 	run();
-	if(restart) execvp(argv[0], argv);
+	if (restart)
+		execvp(argv[0], argv);
 	cleanup();
 	XCloseDisplay(dpy);
 	return EXIT_SUCCESS;
