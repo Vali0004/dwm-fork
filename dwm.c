@@ -53,6 +53,7 @@
 #define INTERSECT(x,y,w,h,m)    (MAX(0, MIN((x)+(w),(m)->mx+(m)->mw) - MAX((x),(m)->mx)) \
                                * MAX(0, MIN((y)+(h),(m)->my+(m)->mh) - MAX((y),(m)->my)))
 #define ISVISIBLE(C)            ((C->tags & C->mon->tagset[C->mon->seltags]))
+#define HIDDEN(C)               ((getstate(C->win) == IconicState))
 #define MOUSEMASK               (BUTTONMASK|PointerMotionMask)
 #define WIDTH(X)                ((X)->w + 2 * (X)->bw)
 #define HEIGHT(X)               ((X)->h + 2 * (X)->bw)
@@ -76,7 +77,7 @@
 
 /* enums */
 enum { CurNormal, CurResize, CurMove, CurLast }; /* cursor */
-enum { SchemeNorm, SchemeSel, SchemeStatus, SchemeTagsSel, SchemeTagsNorm, SchemeInfoSel, SchemeInfoNorm }; /* color schemes */
+enum { SchemeNorm, SchemeSel, SchemeHov, SchemeHid, SchemeStatus, SchemeTagsSel, SchemeTagsNorm, SchemeInfoSel, SchemeInfoNorm }; /* color schemes */
 enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
        NetWMFullscreen, NetActiveWindow, NetWMWindowType,
        NetSystemTray, NetSystemTrayOP, NetSystemTrayOrientation, NetSystemTrayOrientationHorz,
@@ -152,6 +153,8 @@ struct Monitor {
 	int nmaster;
 	int num;
 	int by, bh;           /* bar geometry */
+	int btw;              /* width of tasks portion of bar */
+	int bt;               /* number of tasks */
 	int mx, my, mw, mh;   /* screen size */
 	int wx, wy, ww, wh;   /* window area  */
 	int gappih;           /* horizontal gap between windows */
@@ -164,8 +167,10 @@ struct Monitor {
 	TagState tagstate;
 	int showbar;
 	int topbar;
+	int hidsel;
 	Client *clients;
 	Client *sel;
+	Client *hov;
 	Client *lastsel;
 	Client *stack;
 	Monitor *next;
@@ -351,6 +356,7 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 	[MapRequest] = maprequest,
 	[MotionNotify] = motionnotify,
 	[PropertyNotify] = propertynotify,
+	[ResizeRequest] = resizerequest,
 	[UnmapNotify] = unmapnotify
 };
 static Atom wmatom[WMLast], netatom[NetLast], xatom[XLast];
@@ -1822,10 +1828,15 @@ resizerequest(XEvent *e)
 void
 resizemouse(const Arg *arg)
 {
-	int ocx, ocy, nw, nh;
+ 	int ocx, ocy, nw, nh;
+	int ocx2, ocy2, nx, ny;
 	Client *c;
 	Monitor *m;
 	XEvent ev;
+	int horizcorner, vertcorner;
+	int di;
+	unsigned int dui;
+	Window dummy;
 	Time lasttime = 0;
 
 	if (!(c = selmon->sel))
@@ -1833,12 +1844,20 @@ resizemouse(const Arg *arg)
 	if (c->isfullscreen) /* no support resizing fullscreen windows by mouse */
 		return;
 	restack(selmon);
-	ocx = c->x;
-	ocy = c->y;
+ 	ocx = c->x;
+ 	ocy = c->y;
+	ocx2 = c->x + c->w;
+	ocy2 = c->y + c->h;
 	if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
 		None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess)
 		return;
-	XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, c->w + c->bw - 1, c->h + c->bw - 1);
+	if (!XQueryPointer(dpy, c->win, &dummy, &dummy, &di, &di, &nx, &ny, &dui))
+		return;
+	horizcorner = nx < c->w / 2;
+	vertcorner = ny < c->h / 2;
+	XWarpPointer(dpy, None, c->win, 0, 0, 0, 0,
+			horizcorner ? (-c->bw) : (c->w + c->bw -1),
+			vertcorner ? (-c->bw) : (c->h + c->bw -1));
 	do {
 		XMaskEvent(dpy, MOUSEMASK|ExposureMask|SubstructureRedirectMask, &ev);
 		switch(ev.type) {
@@ -1852,8 +1871,16 @@ resizemouse(const Arg *arg)
 				continue;
 			lasttime = ev.xmotion.time;
 
-			nw = MAX(ev.xmotion.x - ocx - 2 * c->bw + 1, 1);
-			nh = MAX(ev.xmotion.y - ocy - 2 * c->bw + 1, 1);
+			nx = horizcorner && ocx2 - ev.xmotion.x >= c->minw ? ev.xmotion.x : c->x;
+			ny = vertcorner && ocy2 - ev.xmotion.y >= c->minh ? ev.xmotion.y : c->y;
+			nw = MAX(horizcorner ? (ocx2 - nx) : (ev.xmotion.x - ocx - 2 * c->bw + 1), 1);
+			nh = MAX(vertcorner ? (ocy2 - ny) : (ev.xmotion.y - ocy - 2 * c->bw + 1), 1);
+
+			if (horizcorner && ev.xmotion.x > ocx2)
+				nx = ocx2 - (nw = c->minw);
+			if (vertcorner && ev.xmotion.y > ocy2)
+				ny = ocy2 - (nh = c->minh);
+
 			if (c->mon->wx + nw >= selmon->wx && c->mon->wx + nw <= selmon->wx + selmon->ww
 			&& c->mon->wy + nh >= selmon->wy && c->mon->wy + nh <= selmon->wy + selmon->wh)
 			{
@@ -1862,11 +1889,13 @@ resizemouse(const Arg *arg)
 					togglefloating(NULL);
 			}
 			if (!selmon->lt[selmon->sellt]->arrange || c->isfloating)
-				resize(c, c->x, c->y, nw, nh, 1);
+				resize(c, nx, ny, nw, nh, 1);
 			break;
 		}
 	} while (ev.type != ButtonRelease);
-	XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, c->w + c->bw - 1, c->h + c->bw - 1);
+	XWarpPointer(dpy, None, c->win, 0, 0, 0, 0,
+		      horizcorner ? (-c->bw) : (c->w + c->bw - 1),
+		      vertcorner ? (-c->bw) : (c->h + c->bw - 1));
 	XUngrabPointer(dpy, CurrentTime);
 	while (XCheckMaskEvent(dpy, EnterWindowMask, &ev));
 	if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
@@ -2094,7 +2123,7 @@ int
 sendevent(Window w, Atom proto, int mask, long d0, long d1, long d2, long d3, long d4)
 {
 	int n;
-	Atom *protocols;
+	Atom *protocols, mt;
 	int exists = 0;
 	XEvent ev;
 
@@ -2747,6 +2776,7 @@ updatebars(void)
 	if (usealtbar)
 		return;
 
+	unsigned int w;
 	Monitor *m;
 	XSetWindowAttributes wa = {
 		.override_redirect = True,
@@ -3357,7 +3387,7 @@ xinitvisual()
 
 	infos = XGetVisualInfo(dpy, masks, &tpl, &nitems);
 	visual = NULL;
-	for(i = 0; i < nitems; i ++) {
+	for (i = 0; i < nitems; i ++) {
         fmt = XRenderFindVisualFormat(dpy, infos[i].visual);
 		if (fmt->type == PictTypeDirect && fmt->direct.alphaMask) {
             visual = infos[i].visual;
@@ -3381,14 +3411,14 @@ Monitor *
 systraytomon(Monitor *m) {
 	Monitor *t;
 	int i, n;
-	if(!systraypinning) {
-		if(!m)
+	if (!systraypinning) {
+		if (!m)
 			return selmon;
 		return m == selmon ? m : NULL;
 	}
-	for(n = 1, t = mons; t && t->next; n++, t = t->next) ;
-	for(i = 1, t = mons; t && t->next && i < systraypinning; i++, t = t->next) ;
-	if(systraypinningfailfirst && n < systraypinning)
+	for (n = 1, t = mons; t && t->next; n++, t = t->next) ;
+	for (i = 1, t = mons; t && t->next && i < systraypinning; i++, t = t->next) ;
+	if (systraypinningfailfirst && n < systraypinning)
 		return mons;
 	return t;
 }
