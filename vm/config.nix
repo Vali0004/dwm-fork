@@ -34,6 +34,7 @@
       busybox
       curl
       clipmenu
+      discord
       fastfetch
       flameshot
       glib
@@ -99,11 +100,6 @@
   };
 
   programs = {
-    bash.loginShellInit = ''
-      if [[ -z $DISPLAY ]] && [[ $(tty) = /dev/tty1 ]]; then
-        exec ${pkgs.xorg.xinit}/bin/startx
-      fi
-    '';
     git.enable = true;
   };
 
@@ -148,7 +144,17 @@
     };
   };
 
-  system.stateVersion = "25.11";
+  system = {
+    activationScripts.fixXinitrc.text = ''
+      # Copy the original script, and set as writable
+      install -Dm755 /etc/X11/xinit/xinitrc /root/.xinitrc
+      install -Dm755 /etc/X11/xinit/xinitrc /home/vali/.xinitrc
+      # Copy to both home directories
+      chown vali:users /root/.xinitrc
+      chown vali:users /home/vali/.xinitrc
+    '';
+    stateVersion = "25.11";
+  };
 
   systemd.watchdog.rebootTime = "0";
 
