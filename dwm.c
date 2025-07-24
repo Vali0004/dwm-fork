@@ -368,6 +368,31 @@ static Colormap cmap;
 
 #include "ipc.h"
 
+/* Key binding functions */
+static void defaultgaps(const Arg *arg);
+static void incrgaps(const Arg *arg);
+static void incrigaps(const Arg *arg);
+static void incrogaps(const Arg *arg);
+static void incrohgaps(const Arg *arg);
+static void incrovgaps(const Arg *arg);
+static void incrihgaps(const Arg *arg);
+static void incrivgaps(const Arg *arg);
+static void togglegaps(const Arg *arg);
+/* Layouts (delete the ones you do not need) */
+static void bstack(Monitor *m);
+static void bstackhoriz(Monitor *m);
+static void centeredmaster(Monitor *m);
+static void centeredfloatingmaster(Monitor *m);
+static void deck(Monitor *m);
+static void dwindle(Monitor *m);
+static void fibonacci(Monitor *m, int s);
+static void grid(Monitor *m);
+static void horizgrid(Monitor *m);
+static void nrowgrid(Monitor *m);
+static void spiral(Monitor *m);
+static void gaplessgrid(Monitor *m);
+static void tile(Monitor *m);
+
 /* configuration, allows nested code to access above variables */
 #include "config.h"
 
@@ -384,10 +409,13 @@ struct Pertag {
 	unsigned int sellts[LENGTH(tags) + 1]; /* selected layouts */
 	const Layout *ltidxs[LENGTH(tags) + 1][2]; /* matrix of tags and layouts indexes  */
 	int showbars[LENGTH(tags) + 1]; /* display bar for the current tag */
+	int enablegaps[LENGTH(tags) + 1]; /* enable gaps for the current tag */
 };
 
 /* compile-time check if all tags fit into an unsigned int bit array. */
 struct NumTags { char limitexceeded[LENGTH(tags) > 31 ? -1 : 1]; };
+
+#include "vanitygaps.c"
 
 /* function implementations */
 void
@@ -682,7 +710,7 @@ clientmessage(XEvent *e)
 			/* use parents background color */
 			swa.background_pixel  = scheme[SchemeNorm][ColBg].pixel;
 			XChangeWindowAttributes(dpy, c->win, CWBackPixel, &swa);
-			sendevent(c->win, netatom[Xembed], StructureNotifyMask, CurrentTime, XEMBED_EMBEDDED_NOTIFY, 0 , systray->win, XEMBED_EMBEDDED_VERSION);
+			sendevent(c->win, netatom[Xembed], StructureNotifyMask, CurrentTime, XEMBED_EMBEDDED_NOTIFY, 0, systray->win, XEMBED_EMBEDDED_VERSION);
 			XSync(dpy, False);
 			setclientstate(c, NormalState);
 			updatesystray(1);
@@ -826,6 +854,7 @@ createmon(void)
 	m->pertag->curtag = m->pertag->prevtag = 1;
 
 	for (i = 0; i <= LENGTH(tags); i++) {
+		m->pertag->enablegaps[i] = 1;
 		m->pertag->nmasters[i] = m->nmaster;
 		m->pertag->mfacts[i] = m->mfact;
 
@@ -2333,15 +2362,9 @@ togglebar(const Arg *arg)
 		if (!selmon->showbar)
 			wc.y = -bh;
 		else if (selmon->showbar) {
-			#if BARPADDING_PATCH
 			wc.y = vp;
 			if (!selmon->topbar)
 				wc.y = selmon->mh - bh + vp;
-			#else
-			wc.y = 0;
-			if (!selmon->topbar)
-				wc.y = selmon->mh - bh;
-			#endif // BARPADDING_PATCH
 		}
 		XConfigureWindow(dpy, systray->win, CWY, &wc);
 	}
@@ -2778,38 +2801,45 @@ updatesystray(int updatebar)
 	XWindowChanges wc;
 	Client *i;
 	Monitor *m = systraytomon(NULL);
-	unsigned int x = m->mx + m->mw;
-	unsigned int w = 1, xpad = 0, ypad = 0;
+	unsigned int w = 0;
+	int x;
 
 	if (!showsystray)
 		return;
 	if (!systray) {
 		/* init systray */
-		if (!(systray = (Systray *)calloc(1, sizeof(Systray))))
+		systray = (Systray *)calloc(1, sizeof(Systray));
+		if (!systray)
 			die("fatal: could not malloc() %u bytes\n", sizeof(Systray));
 
 		wa.override_redirect = True;
-		wa.event_mask = ButtonPressMask|ExposureMask;
+		wa.event_mask = ButtonPressMask | ExposureMask;
 		wa.background_pixel = 0;
 		wa.border_pixel = 0;
 		wa.colormap = cmap;
-		systray->win = XCreateWindow(dpy, root, x - xpad, m->by + ypad, w, bh, 0, depth,
-						InputOutput, visual,
-						CWOverrideRedirect|CWBackPixel|CWBorderPixel|CWColormap|CWEventMask, &wa);
+
+		systray->win = XCreateWindow(
+			dpy, root,
+			m->mx + m->mw, m->by + vp, 1, bh, 0, depth,
+			InputOutput, visual,
+			CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWColormap | CWEventMask,
+			&wa
+		);
+
 		XSelectInput(dpy, systray->win, SubstructureNotifyMask);
 		XChangeProperty(dpy, systray->win, netatom[NetSystemTrayOrientation], XA_CARDINAL, 32,
-				PropModeReplace, (unsigned char *)&systrayorientation, 1);
+		                PropModeReplace, (unsigned char *)&systrayorientation, 1);
 		XChangeProperty(dpy, systray->win, netatom[NetSystemTrayVisual], XA_VISUALID, 32,
-				PropModeReplace, (unsigned char *)&visual->visualid, 1);
+		                PropModeReplace, (unsigned char *)&visual->visualid, 1);
 		XChangeProperty(dpy, systray->win, netatom[NetWMWindowType], XA_ATOM, 32,
-				PropModeReplace, (unsigned char *)&netatom[NetWMWindowTypeDock], 1);
+		                PropModeReplace, (unsigned char *)&netatom[NetWMWindowTypeDock], 1);
 		XMapRaised(dpy, systray->win);
 		XSetSelectionOwner(dpy, netatom[NetSystemTray], systray->win, CurrentTime);
 		if (XGetSelectionOwner(dpy, netatom[NetSystemTray]) == systray->win) {
-			sendevent(root, xatom[Manager], StructureNotifyMask, CurrentTime, netatom[NetSystemTray], systray->win, 0, 0);
+			sendevent(root, xatom[Manager], StructureNotifyMask, CurrentTime,
+			          netatom[NetSystemTray], systray->win, 0, 0);
 			XSync(dpy, False);
-		}
-		else {
+		} else {
 			fprintf(stderr, "dwm: unable to obtain system tray.\n");
 			free(systray);
 			systray = NULL;
@@ -2817,26 +2847,35 @@ updatesystray(int updatebar)
 		}
 	}
 
-	for (w = 0, i = systray->icons; i; i = i->next) {
-		wa.background_pixel = 0;
+	/* Calculate total width and position icons */
+	for (i = systray->icons; i; i = i->next) {
 		XChangeWindowAttributes(dpy, i->win, CWBackPixel, &wa);
 		XMapRaised(dpy, i->win);
-		w += systrayspacing;
-		i->x = w;
-		XMoveResizeWindow(dpy, i->win, i->x, 0, i->w, i->h);
-		w += i->w;
+		i->x = w + systrayspacing;
+		int drawable = bh - 2 * vp;
+		if (i->h > drawable)
+			i->h = drawable;
+		/* Center icon vertically */
+		int icon_y = (drawable - i->h) / 2 + vp;
+		XMoveResizeWindow(dpy, i->win, i->x, icon_y, i->w, i->h);
+		w = i->x + i->w;
 		if (i->mon != m)
 			i->mon = m;
 	}
 	w = w ? w + systrayspacing : 1;
-	x -= w;
-	XMoveResizeWindow(dpy, systray->win, x - xpad, m->by + ypad, w, bh);
-	wc.x = x - xpad;
-	wc.y = m->by + ypad;
+
+	x = m->mx + m->ww - w - sp;
+
+	XMoveResizeWindow(dpy, systray->win, x, m->by + vp, w, bh);
+	wc.x = x;
+	wc.y = m->by + vp;
 	wc.width = w;
 	wc.height = bh;
-	wc.stack_mode = Above; wc.sibling = m->barwin;
-	XConfigureWindow(dpy, systray->win, CWX|CWY|CWWidth|CWHeight|CWSibling|CWStackMode, &wc);
+	wc.stack_mode = Above;
+	wc.sibling = m->barwin;
+	XConfigureWindow(dpy, systray->win,
+	                 CWX | CWY | CWWidth | CWHeight | CWSibling | CWStackMode,
+	                 &wc);
 	XMapWindow(dpy, systray->win);
 	XMapSubwindows(dpy, systray->win);
 	XSync(dpy, False);
