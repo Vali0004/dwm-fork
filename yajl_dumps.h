@@ -32,6 +32,8 @@ int dump_monitor(yajl_gen gen, Monitor *mon, int is_selected);
 
 int dump_monitors(yajl_gen gen, Monitor *mons, Monitor *selmon);
 
+int dump_clients(yajl_gen gen, Monitor *mons);
+
 int dump_layouts(yajl_gen gen, const Layout layouts[], const int layouts_len);
 
 int dump_tag_state(yajl_gen gen, TagState state);

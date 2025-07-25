@@ -179,6 +179,27 @@ dump_monitors(yajl_gen gen, Monitor *mons, Monitor *selmon)
 }
 
 int
+dump_clients(yajl_gen gen, Monitor *mons)
+{
+  // clang-format off
+  YSTR("clients"); YARR(
+    for (Monitor *m = mons; m; m = m->next) {
+      for (Client *c = m->clients; c; c = c->next) {
+        YMAP(
+          YSTR("client_window_id"); YINT(c->win);
+          YSTR("tags"); YINT(c->tags);
+          YSTR("monitor"); YINT(m->num);
+          YSTR("is_focused"); YBOOL((selmon->sel == c) ? 1 : 0);
+        )
+      }
+    }
+  )
+  // clang-format on
+
+  return 0;
+}
+
+int
 dump_layouts(yajl_gen gen, const Layout layouts[], const int layouts_len)
 {
   // clang-format off

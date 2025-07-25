@@ -12,8 +12,8 @@
 #define IPC_MAGIC_ARR { 'D', 'W', 'M', '-', 'I', 'P', 'C'}
 #define IPC_MAGIC_LEN 7 // Not including null char
 
-#define IPCCOMMAND(FUNC, ARGC, TYPES)                                          \
-  { #FUNC, {FUNC }, ARGC, (ArgType[ARGC])TYPES }
+#define IPCCOMMAND(FUNC, ARGC, ...) \
+  { #FUNC, {FUNC }, ARGC, (ArgType[ARGC])__VA_ARGS__ }
 // clang-format on
 
 typedef enum IPCMessageType {
@@ -22,8 +22,9 @@ typedef enum IPCMessageType {
   IPC_TYPE_GET_TAGS = 2,
   IPC_TYPE_GET_LAYOUTS = 3,
   IPC_TYPE_GET_DWM_CLIENT = 4,
-  IPC_TYPE_SUBSCRIBE = 5,
-  IPC_TYPE_EVENT = 6
+  IPC_TYPE_GET_CLIENTS = 5,
+  IPC_TYPE_SUBSCRIBE = 6,
+  IPC_TYPE_EVENT = 7
 } IPCMessageType;
 
 typedef enum IPCEvent {

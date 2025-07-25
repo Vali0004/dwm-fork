@@ -54,8 +54,9 @@ typedef enum IPCMessageType {
   IPC_TYPE_GET_TAGS = 2,
   IPC_TYPE_GET_LAYOUTS = 3,
   IPC_TYPE_GET_DWM_CLIENT = 4,
-  IPC_TYPE_SUBSCRIBE = 5,
-  IPC_TYPE_EVENT = 6
+  IPC_TYPE_GET_CLIENTS = 5,
+  IPC_TYPE_SUBSCRIBE = 6,
+  IPC_TYPE_EVENT = 7
 } IPCMessageType;
 
 // Every IPC message must begin with this
@@ -407,6 +408,15 @@ get_dwm_client(Window win)
 }
 
 static int
+get_clients(void)
+{
+  send_message(IPC_TYPE_GET_CLIENTS, 1, (uint8_t *)"");
+  print_socket_reply();
+
+  return 0;
+}
+
+static int
 subscribe(const char *event)
 {
   const unsigned char *msg;
@@ -471,6 +481,8 @@ print_usage(const char *name)
   puts("");
   puts("  get_dwm_client <window_id>      Get dwm client proprties");
   puts("");
+  puts("  get_clients                     Gets all clients and their properties");
+  puts("");
   puts("  subscribe [events...]           Subscribe to specified events");
   puts("                                  Options: " IPC_EVENT_TAG_CHANGE ",");
   puts("                                  " IPC_EVENT_LAYOUT_CHANGE ",");
@@ -532,6 +544,8 @@ main(int argc, char *argv[])
         usage_error(prog_name, "Expected unsigned integer argument");
     } else
       usage_error(prog_name, "Expected the window id");
+  } else if (strcmp(argv[i], "get_clients") == 0) {
+    get_clients();
   } else if (strcmp(argv[i], "subscribe") == 0) {
     if (++i < argc) {
       for (int j = i; j < argc; j++) subscribe(argv[j]);
