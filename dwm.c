@@ -603,7 +603,7 @@ buttonpress(XEvent *e)
 			arg.ui = 1 << i;
 		} else if (ev->x < x + TEXTW(selmon->ltsymbol))
 			click = ClkLtSymbol;
-		else if (ev->x > selmon->ww - TEXTW(stext) - getsystraywidth())
+		else if (ev->x > selmon->ww - (int)TEXTW(stext) - getsystraywidth())
 			click = ClkStatusText;
 		else
 			click = ClkWinTitle;
@@ -726,9 +726,6 @@ clientmessage(XEvent *e)
 			XAddToSaveSet(dpy, c->win);
 			XSelectInput(dpy, c->win, StructureNotifyMask | PropertyChangeMask | ResizeRedirectMask);
 			XReparentWindow(dpy, c->win, systray->win, 0, 0);
-			/* use parents background color */
-			swa.background_pixel  = scheme[SchemeNorm][ColBg].pixel;
-			XChangeWindowAttributes(dpy, c->win, CWBackPixel, &swa);
 			sendevent(c->win, netatom[Xembed], StructureNotifyMask, CurrentTime, XEMBED_EMBEDDED_NOTIFY, 0 , systray->win, XEMBED_EMBEDDED_VERSION);
 			XSync(dpy, False);
 			setclientstate(c, NormalState);
@@ -942,103 +939,100 @@ dirtomon(int dir)
 }
 
 int
-drawstatusbar(Monitor *m, int bh, char* stext) {
+drawstatusbar(Monitor *m, int bh, char *stext)
+{
 	int ret, i, w, x, len;
 	short is_code = 0;
-	char *text;
-	char *p;
+	char *text, *p;
 
-	len = strlen(stext) + 1 ;
-	if (!(text = (char*) malloc(sizeof(char)*len)))
+	len = strlen(stext) + 1;
+	if (!(text = malloc(len)))
 		die("malloc");
-	p = text;
 	memcpy(text, stext, len);
+	p = text;
 
-	/* compute width of the status text */
+	/* Calculate the width of the status text */
 	w = 0;
-	i = -1;
-	while (text[++i]) {
+	for (i = 0; text[i]; ++i) {
 		if (text[i] == '^') {
 			if (!is_code) {
 				is_code = 1;
 				text[i] = '\0';
 				w += TEXTW(text) - lrpad;
 				text[i] = '^';
-				if (text[++i] == 'f')
+
+				if (text[++i] == 'f') {
 					w += atoi(text + ++i);
+				}
 			} else {
 				is_code = 0;
-				text = text + i + 1;
+				text += i + 1;
 				i = -1;
 			}
 		}
 	}
 	if (!is_code)
 		w += TEXTW(text) - lrpad;
-	else
-		is_code = 0;
+	is_code = 0;
 	text = p;
 
-	w += lrpad; /* 1px padding on both sides */
+	w += lrpad; /* Add side padding */
+
 	ret = m->ww - w;
 	x = m->ww - w - getsystraywidth();
 
+	/* Draw background */
 	drw_setscheme(drw, scheme[LENGTH(colors)]);
 	drw->scheme[ColFg] = scheme[SchemeNorm][ColFg];
 	drw->scheme[ColBg] = scheme[SchemeNorm][ColBg];
 	drw_rect(drw, x - 2 * sp, 0, w, bh, 1, 1);
 	x += lrpad / 2;
 
-	/* process status text */
-	i = -1;
-	while (text[++i]) {
+	/* Draw each segment of the status text */
+	for (i = 0; text[i]; ++i) {
 		if (text[i] == '^' && !is_code) {
 			is_code = 1;
-
 			text[i] = '\0';
+
 			w = TEXTW(text) - lrpad;
 			drw_text(drw, x - 2 * sp, vp / 2, w, bh - vp, 0, text, 0);
-
 			x += w;
 
-			/* process code */
-			while (text[++i] != '^') {
-				if (text[i] == 'c') {
-					char buf[8];
-					memcpy(buf, (char*)text+i+1, 7);
-					buf[7] = '\0';
-					drw_clr_create(drw, &drw->scheme[ColFg], buf, alphas[SchemeNorm][ColFg]);
-					i += 7;
-				} else if (text[i] == 'b') {
-					char buf[8];
-					memcpy(buf, (char*)text+i+1, 7);
-					buf[7] = '\0';
-					drw_clr_create(drw, &drw->scheme[ColBg], buf, alphas[SchemeNorm][ColBg]);
+			/* Process code block */
+			while (text[++i] && text[i] != '^') {
+				if (text[i] == 'c' || text[i] == 'b') {
+					char buf[8] = {0};
+					memcpy(buf, text + i + 1, 7);
+					if (text[i] == 'c')
+						drw_clr_create(drw, &drw->scheme[ColFg], buf, alphas[SchemeNorm][ColFg]);
+					else
+						drw_clr_create(drw, &drw->scheme[ColBg], buf, alphas[SchemeNorm][ColBg]);
 					i += 7;
 				} else if (text[i] == 'd') {
 					drw->scheme[ColFg] = scheme[SchemeNorm][ColFg];
 					drw->scheme[ColBg] = scheme[SchemeNorm][ColBg];
 				} else if (text[i] == 'r') {
 					int rx = atoi(text + ++i);
-					while (text[++i] != ',');
+					while (text[i] != ',' && text[i]) ++i;
 					int ry = atoi(text + ++i);
-					while (text[++i] != ',');
+					while (text[i] != ',' && text[i]) ++i;
 					int rw = atoi(text + ++i);
-					while (text[++i] != ',');
+					while (text[i] != ',' && text[i]) ++i;
 					int rh = atoi(text + ++i);
 
-					drw_rect(drw, rx +x - 2 * sp, ry + vp / 2, rw, MIN(rh, bh - vp), 1, 0);
+					drw_rect(drw, rx + x - 2 * sp, ry + vp / 2, rw, MIN(rh, bh - vp), 1, 0);
 				} else if (text[i] == 'f') {
 					x += atoi(text + ++i);
 				}
 			}
 
-			text = text + i + 1;
-			i=-1;
+			text += i + 1;
+			i = -1;
 			is_code = 0;
 		}
 	}
 
+	/* Final plain text rendering */
 	if (!is_code) {
 		w = TEXTW(text) - lrpad;
 		drw_text(drw, x - 2 * sp, 0, w, bh, 0, text, 0);
@@ -1046,7 +1040,6 @@ drawstatusbar(Monitor *m, int bh, char* stext) {
 
 	drw_setscheme(drw, scheme[SchemeNorm]);
 	free(p);
-
 	return ret;
 }
 
@@ -1072,15 +1065,18 @@ drawbar(Monitor *m)
 	/* draw status first so it can be overdrawn by tags later */
 	if (m == selmon) { /* status is only drawn on selected monitor */
 		tw = m->ww - drawstatusbar(m, bh, stext);
+		tw += 2 * sp;
 	}
 
 	resizebarwin(m);
-	for (c = m->clients; c; c = c->next) {
-		occ |= c->tags;
-		if (c->isurgent)
-			urg |= c->tags;
-	}
-	x = horizpad;
+ 	for (c = m->clients; c; c = c->next) {
+ 		occ |= c->tags;
+ 		if (c->isurgent)
+ 			urg |= c->tags;
+ 	}
+
+	x = sp;
+
  	for (i = 0; i < LENGTH(tags); i++) {
  		w = TEXTW(tags[i]);
  		drw_setscheme(drw, scheme[m->tagset[m->seltags] & 1 << i ? SchemeSel : SchemeNorm]);
@@ -1091,11 +1087,12 @@ drawbar(Monitor *m)
  				urg & 1 << i);
  		x += w;
  	}
-	w = TEXTW(m->ltsymbol);
-	drw_setscheme(drw, scheme[SchemeNorm]);
+
+ 	w = TEXTW(m->ltsymbol);
+ 	drw_setscheme(drw, scheme[SchemeNorm]);
  	x = drw_text(drw, x, 0, w, bh, lrpad / 2, m->ltsymbol, 0);
 
-	if ((w = m->ww - tw - stw - x) > bh) {
+	if ((w = m->ww - tw - stw - x - sp) > bh) {
 		if (m->sel) {
 			drw_setscheme(drw, scheme[m == selmon ? SchemeSel : SchemeNorm]);
 			drw_text(drw, x, 0, w - 2 * sp, bh, lrpad / 2, m->sel->name, 0);
@@ -1846,7 +1843,7 @@ resizebarwin(Monitor *m) {
 	unsigned int w = m->ww;
 	if (showsystray && m == systraytomon(m) && !systrayonleft)
 		w -= getsystraywidth();
-	XMoveResizeWindow(dpy, m->barwin, m->wx, m->by, w, bh);
+	XMoveResizeWindow(dpy, m->barwin, m->wx + sp, m->by + vp, w - 2 * sp, bh);
 }
 
 void
@@ -2319,8 +2316,11 @@ setup(void)
 	if (!drw_fontset_create(drw, fonts, LENGTH(fonts)))
 		die("no fonts could be loaded.");
 	lrpad = drw->fonts->h;
+	sp = sidepad;
+	vp = (topbar == 1) ? vertpad : -vertpad;
 	bh = usealtbar ? 0 : drw->fonts->h + 2 * vertpad;
 	updategeom();
+
 	/* init atoms */
 	utf8string = XInternAtom(dpy, "UTF8_STRING", False);
 	wmatom[WMProtocols] = XInternAtom(dpy, "WM_PROTOCOLS", False);
@@ -2585,9 +2585,9 @@ togglebar(const Arg *arg)
 		if (!selmon->showbar)
 			wc.y = -bh;
 		else if (selmon->showbar) {
-			wc.y = vertpad;
+			wc.y = vp;
 			if (!selmon->topbar)
-				wc.y = selmon->mh - bh + vertpad;
+				wc.y = selmon->mh - bh + vp;
 		}
 		XConfigureWindow(dpy, systray->win, CWY, &wc);
 	}
@@ -2783,8 +2783,8 @@ updatebarpos(Monitor *m)
 	m->wy = m->my;
 	m->wh = m->mh;
 	if (m->showbar) {
-		m->wh = m->wh - vertpad - bh;
-		m->by = m->topbar ? m->wy : m->wy + m->wh + vertpad;
+		m->wh = m->wh - vp - bh;
+		m->by = m->topbar ? m->wy : m->wy + m->wh + vp;
 		m->wy = m->topbar ? m->wy + bh + vp : m->wy;
 	} else 
 		m->by = -bh - vp;
@@ -3032,21 +3032,20 @@ updatesystray(int updatebar)
 		/* init systray */
 		if (!(systray = (Systray *)calloc(1, sizeof(Systray))))
 			die("fatal: could not malloc() %u bytes\n", sizeof(Systray));
-		systray->win = XCreateSimpleWindow(dpy, root, x, m->by, w, bh, 0, 0, scheme[SchemeSel][ColBg].pixel);
-		wa.event_mask        = ButtonPressMask | ExposureMask;
+		systray->win = XCreateSimpleWindow(dpy, root, x, m->by, w, bh, 0, 0, 0);
 		wa.override_redirect = True;
-		wa.background_pixel  = scheme[SchemeNorm][ColBg].pixel;
+		wa.background_pixmap = None;
 		XSelectInput(dpy, systray->win, SubstructureNotifyMask);
 		XChangeProperty(dpy, systray->win, netatom[NetSystemTrayOrientation], XA_CARDINAL, 32,
-				PropModeReplace, (unsigned char *)&netatom[NetSystemTrayOrientationHorz], 1);
-		XChangeWindowAttributes(dpy, systray->win, CWEventMask|CWOverrideRedirect|CWBackPixel, &wa);
+		                PropModeReplace, (unsigned char *)&netatom[NetSystemTrayOrientationHorz], 1);
+		XChangeWindowAttributes(dpy, systray->win, CWEventMask | CWOverrideRedirect | CWBackPixmap, &wa);
 		XMapRaised(dpy, systray->win);
 		XSetSelectionOwner(dpy, netatom[NetSystemTray], systray->win, CurrentTime);
 		if (XGetSelectionOwner(dpy, netatom[NetSystemTray]) == systray->win) {
-			sendevent(root, xatom[Manager], StructureNotifyMask, CurrentTime, netatom[NetSystemTray], systray->win, 0, 0);
+			sendevent(root, xatom[Manager], StructureNotifyMask, CurrentTime,
+			          netatom[NetSystemTray], systray->win, 0, 0);
 			XSync(dpy, False);
-		}
-		else {
+		} else {
 			fprintf(stderr, "dwm: unable to obtain system tray.\n");
 			free(systray);
 			systray = NULL;
@@ -3054,9 +3053,6 @@ updatesystray(int updatebar)
 		}
 	}
 	for (w = 0, i = systray->icons; i; i = i->next) {
-		/* make sure the background color stays the same */
-		wa.background_pixel  = scheme[SchemeNorm][ColBg].pixel;
-		XChangeWindowAttributes(dpy, i->win, CWBackPixel, &wa);
 		XMapRaised(dpy, i->win);
 		w += systrayspacing;
 		i->x = w;
@@ -3072,13 +3068,12 @@ updatesystray(int updatebar)
 	wc.y = m->by + vp;
 	wc.width = w;
 	wc.height = bh;
-	wc.stack_mode = Above; wc.sibling = m->barwin;
-	XConfigureWindow(dpy, systray->win, CWX|CWY|CWWidth|CWHeight|CWSibling|CWStackMode, &wc);
+	wc.stack_mode = Above;
+	wc.sibling = m->barwin;
+	XConfigureWindow(dpy, systray->win,
+	                 CWX | CWY | CWWidth | CWHeight | CWSibling | CWStackMode, &wc);
 	XMapWindow(dpy, systray->win);
 	XMapSubwindows(dpy, systray->win);
-	/* redraw background */
-	XSetForeground(dpy, drw->gc, scheme[SchemeNorm][ColBg].pixel);
-	XFillRectangle(dpy, systray->win, drw->gc, 0, 0, w, bh);
 	XSync(dpy, False);
 
 	if (updatebar)

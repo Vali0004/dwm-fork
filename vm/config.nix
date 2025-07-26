@@ -37,6 +37,7 @@
       discord
       fastfetch
       flameshot
+      gdb
       glib
       gnused
       google-chrome
