@@ -43,6 +43,7 @@
 #include <X11/extensions/Xinerama.h>
 #endif /* XINERAMA */
 #include <X11/Xft/Xft.h>
+#include <X11/extensions/Xrender.h>
 
 #include "drw.h"
 #include "util.h"
@@ -119,6 +120,16 @@ typedef struct {
 
 typedef struct Monitor Monitor;
 typedef struct Client Client;
+
+typedef struct Preview Preview;
+struct Preview {
+	XImage *orig_image;
+	XImage *scaled_image;
+	Window win;
+	unsigned int x, y;
+	Preview *next;
+};
+
 struct Client {
 	char name[256];
 	float mina, maxa;
@@ -133,6 +144,7 @@ struct Client {
 	Client *snext;
 	Monitor *mon;
 	Window win;
+	Preview pre;
 	ClientState prevstate;
 };
 
@@ -314,6 +326,10 @@ static int xerrordummy(Display *dpy, XErrorEvent *ee);
 static int xerrorstart(Display *dpy, XErrorEvent *ee);
 static void xinitvisual();
 static void zoom(const Arg *arg);
+static void previewallwin();
+static void setpreviewwindowsizepositions(unsigned int n, Monitor *m, unsigned int gappo, unsigned int gappi);
+static XImage *getwindowximage(Client *c);
+static XImage *scaledownimage(XImage *orig_image, unsigned int cw, unsigned int ch);
 
 /* variables */
 static const char autostartblocksh[] = "autostart_blocking.sh";
@@ -3235,6 +3251,256 @@ zoom(const Arg *arg)
 	if (c == nexttiled(selmon->clients) && !(c = nexttiled(c->next)))
 		return;
 	pop(c);
+}
+
+void previewallwin(void) {
+    Monitor *m = selmon;
+    Client *c, *focus_c = NULL;
+    Client **clients;
+    unsigned int n = 0, i;
+    XEvent event;
+    int done = 0, index = 0;
+
+    for (c = m->clients; c; c = c->next)
+        n++;
+    if (n == 0)
+        return;
+
+    clients = calloc(n, sizeof(Client *));
+    if (!clients)
+        return;
+
+    for (c = m->clients, i = 0; c; c = c->next, i++) {
+        if (c->isfullscreen)
+            togglefullscr(&(Arg){0});
+        c->pre.orig_image = getwindowximage(c); 
+        clients[i] = c;
+    }
+
+    setpreviewwindowsizepositions(n, m, 60, 15);
+
+    for (i = 0; i < n; i++) {
+        c = clients[i];
+        if (!c->pre.win)
+            c->pre.win = XCreateSimpleWindow(dpy, root, c->pre.x, c->pre.y,
+                c->pre.scaled_image->width, c->pre.scaled_image->height,
+                1, BlackPixel(dpy, screen), WhitePixel(dpy, screen));
+        else
+            XMoveResizeWindow(dpy, c->pre.win, c->pre.x, c->pre.y,
+                c->pre.scaled_image->width, c->pre.scaled_image->height);
+
+        XSetWindowBorder(dpy, c->pre.win, scheme[SchemeNorm][ColBorder].pixel);
+        XMapWindow(dpy, c->pre.win);
+
+        GC gc = XCreateGC(dpy, c->pre.win, 0, NULL);
+        XPutImage(dpy, c->pre.win, gc, c->pre.scaled_image, 0, 0, 0, 0,
+            c->pre.scaled_image->width, c->pre.scaled_image->height);
+        XFreeGC(dpy, gc);
+    }
+
+    XGrabKeyboard(dpy, root, True, GrabModeAsync, GrabModeAsync, CurrentTime);
+    XGrabPointer(dpy, root, True,
+        ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+        GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
+    XAllowEvents(dpy, ReplayPointer, CurrentTime);
+
+    while (!done) {
+        for (i = 0; i < n; i++) {
+            XSetWindowBorder(dpy, clients[i]->pre.win,
+                i == index ? scheme[SchemeSel][ColFg].pixel : scheme[SchemeNorm][ColBorder].pixel);
+        }
+
+        XNextEvent(dpy, &event);
+
+        switch (event.type) {
+        //case ButtonPress:
+        //    if (event.xbutton.button == Button1) {
+        //        Window clicked = event.xbutton.window;
+        //        for (i = 0; i < n; i++) {
+        //            if (clicked == clients[i]->pre.win) {
+        //                focus_c = clients[i];
+        //                index = i;
+        //                done = 1;
+        //                break;
+        //            }
+        //        }
+        //    }
+        //    break;
+
+        case KeyPress: {
+            KeySym sym = XLookupKeysym(&event.xkey, 0);
+            if (sym == XK_Tab) {
+                index = (index + 1) % n;
+            } else if (sym == XK_Escape) {
+                focus_c = NULL;
+                done = 1;
+            }
+            break;
+        }
+
+        case KeyRelease: {
+            KeySym sym = XLookupKeysym(&event.xkey, 0);
+            if (sym == XK_Alt_L || sym == XK_Alt_R) {
+                focus_c = clients[index];
+                done = 1;
+            }
+            break;
+        }
+
+        case EnterNotify:
+            for (i = 0; i < n; i++) {
+                if (event.xcrossing.window == clients[i]->pre.win) {
+                    index = i;
+                    break;
+                }
+            }
+            break;
+        }
+    }
+
+	XUngrabPointer(dpy, CurrentTime);
+	XUngrabKeyboard(dpy, CurrentTime);
+
+	if (focus_c) {
+		selmon->seltags ^= 1;
+		selmon->tagset[selmon->seltags] = focus_c->tags;
+
+		arrange(selmon);
+		focus(focus_c);
+		restack(selmon);
+		XSetInputFocus(dpy, focus_c->win, RevertToPointerRoot, CurrentTime);
+	}
+
+	for (i = 0; i < n; i++) {
+		c = clients[i];
+		XUnmapWindow(dpy, c->pre.win);
+		XDestroyImage(c->pre.orig_image);
+		XDestroyImage(c->pre.scaled_image);
+	}
+	free(clients);
+}
+
+void
+setpreviewwindowsizepositions(unsigned int n, Monitor *m, unsigned int gappo, unsigned int gappi)
+{
+	unsigned int i, j;
+	unsigned int cx, cy, cw, ch, cmaxh;
+	unsigned int cols, rows;
+	Client *c, *tmpc;
+
+	if (n == 1) {
+		c = m->clients;
+		cw = (m->ww - 2 * gappo) * 0.8;
+		ch = (m->wh - 2 * gappo) * 0.9;
+		c->pre.scaled_image = scaledownimage(c->pre.orig_image, cw, ch);
+		c->pre.x = m->mx + (m->mw - c->pre.scaled_image->width) / 2;
+		c->pre.y = m->my + (m->mh - c->pre.scaled_image->height) / 2;
+		return;
+	}
+	if (n == 2) {
+		c = m->clients;
+		cw = (m->ww - 2 * gappo - gappi) / 2;
+		ch = (m->wh - 2 * gappo) * 0.7;
+		c->pre.scaled_image = scaledownimage(c->pre.orig_image, cw, ch);
+		c->next->pre.scaled_image = scaledownimage(c->next->pre.orig_image, cw, ch);
+		c->pre.x = m->mx + (m->mw - c->pre.scaled_image->width - gappi - c->next->pre.scaled_image->width) / 2;
+		c->pre.y = m->my + (m->mh - c->pre.scaled_image->height) / 2;
+		c->next->pre.x = c->pre.x + c->pre.scaled_image->width + gappi;
+		c->next->pre.y = m->my + (m->mh - c->next->pre.scaled_image->height) / 2;
+		return;
+	}
+	for (cols = 0; cols <= n / 2; cols++)
+		if (cols * cols >= n)
+			break;
+	rows = (cols && (cols - 1) * cols >= n) ? cols - 1 : cols;
+	ch = (m->wh - 2 * gappo) / rows;
+	cw = (m->ww - 2 * gappo) / cols;
+	c = m->clients;
+	cy = 0;
+	for (i = 0; i < rows; i++) {
+		cx = 0;
+		cmaxh = 0;
+		tmpc = c;
+		for (int j = 0; j < cols; j++) {
+			if (!c)
+				break;
+			c->pre.scaled_image = scaledownimage(c->pre.orig_image, cw, ch);
+			c->pre.x = cx;
+			cmaxh = c->pre.scaled_image->height > cmaxh ? c->pre.scaled_image->height : cmaxh;
+			cx += c->pre.scaled_image->width + gappi;
+			c = c->next;
+		}
+		c = tmpc;
+		cx = m->wx + (m->ww - cx) / 2;
+		for (j = 0; j < cols; j++) {
+			if (!c)
+				break;
+			c->pre.x += cx;
+			c->pre.y = cy + (cmaxh - c->pre.scaled_image->height) / 2;
+			c = c->next;
+		}
+		cy += cmaxh + gappi;
+	}
+	cy = m->wy + (m->wh - cy) / 2;
+	for (c = m->clients; c; c = c->next)
+		c->pre.y += cy;
+}
+
+XImage*
+getwindowximage(Client *c)
+{
+	XWindowAttributes attr;
+	XGetWindowAttributes( dpy, c->win, &attr );
+	XRenderPictFormat *format = XRenderFindVisualFormat( dpy, attr.visual );
+	int hasAlpha = ( format->type == PictTypeDirect && format->direct.alphaMask );
+	XRenderPictureAttributes pa;
+	pa.subwindow_mode = IncludeInferiors;
+	Picture picture = XRenderCreatePicture( dpy, c->win, format, CPSubwindowMode, &pa );
+	Pixmap pixmap = XCreatePixmap(dpy, root, c->w, c->h, 32);
+	XRenderPictureAttributes pa2;
+	XRenderPictFormat *format2 = XRenderFindStandardFormat(dpy, PictStandardARGB32);
+	Picture pixmapPicture = XRenderCreatePicture( dpy, pixmap, format2, 0, &pa2 );
+	XRenderColor color;
+	color.red = 0x0000;
+	color.green = 0x0000;
+	color.blue = 0x0000;
+	color.alpha = 0x0000;
+	XRenderFillRectangle (dpy, PictOpSrc, pixmapPicture, &color, 0, 0, c->w, c->h);
+	XRenderComposite(dpy, hasAlpha ? PictOpOver : PictOpSrc, picture, 0,
+			pixmapPicture, 0, 0, 0, 0, 0, 0,
+			c->w, c->h);
+	XImage* temp = XGetImage( dpy, pixmap, 0, 0, c->w, c->h, AllPlanes, ZPixmap );
+	temp->red_mask = format2->direct.redMask << format2->direct.red;
+	temp->green_mask = format2->direct.greenMask << format2->direct.green;
+	temp->blue_mask = format2->direct.blueMask << format2->direct.blue;
+	temp->depth = DefaultDepth(dpy, screen);
+	return temp;
+}
+
+XImage*
+scaledownimage(XImage *orig_image, unsigned int cw, unsigned int ch)
+{
+	int factor_w = orig_image->width / cw + 1;
+	int factor_h = orig_image->height / ch + 1;
+	int scale_factor = factor_w > factor_h ? factor_w : factor_h;
+	int scaled_width = orig_image->width / scale_factor;
+	int scaled_height = orig_image->height / scale_factor;
+	XImage *scaled_image = XCreateImage(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
+			orig_image->depth,
+			ZPixmap, 0, NULL,
+			scaled_width, scaled_height,
+			32, 0);
+	scaled_image->data = malloc(scaled_image->height * scaled_image->bytes_per_line);
+	for (int y = 0; y < scaled_height; y++) {
+		for (int x = 0; x < scaled_width; x++) {
+			int orig_x = x * scale_factor;
+			int orig_y = y * scale_factor;
+			unsigned long pixel = XGetPixel(orig_image, orig_x, orig_y);
+			XPutPixel(scaled_image, x, y, pixel);
+		}
+	}
+	scaled_image->depth = orig_image->depth;
+	return scaled_image;
 }
 
 int
