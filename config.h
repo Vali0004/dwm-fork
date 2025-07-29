@@ -26,19 +26,23 @@ static const char col_gray1[]            = "#0F0F0F";
 static const char col_gray2[]            = "#3B3B3B";
 static const char col_gray3[]            = "#bbbbbb";
 static const char col_gray4[]            = "#eeeeee";
-static const char col_yellow[]           = "#fcff5f";
-static const char col_orange[]           = "#f89500";
+static const char col_yellow[]           = "#fffc43";
+static const char col_orange[]           = "#9437ff";
 static const unsigned int baralpha       = 0xd0;
 static const unsigned int borderalpha    = OPAQUE;
 static const char *colors[][3] = {
     /*               fg          bg         border   */
     [SchemeNorm] = { col_gray3,  col_gray1, col_gray2 },
     [SchemeSel]  = { col_gray3,  col_gray1, col_gray1 },
+	[SchemeTag]  = { col_gray3,  col_orange, col_gray1 },
+	[SchemeUrg]  = { col_gray3,  col_yellow, col_gray1 },
 };
 static const unsigned int alphas[][3] = {
     /*               fg      bg        border      */
     [SchemeNorm] = { OPAQUE, baralpha, borderalpha },
     [SchemeSel]  = { OPAQUE, baralpha, borderalpha },
+	[SchemeTag]  = { OPAQUE, baralpha, borderalpha },
+	[SchemeUrg]  = { OPAQUE, baralpha, borderalpha },
 };
 
 /* tagging */
@@ -49,8 +53,9 @@ static const Rule rules[] = {
 	 *	WM_CLASS(STRING) = instance, class
 	 *	WM_NAME(STRING) = title
 	 */
-	/* class            instance    title                    tags mask     isfloating   monitor */
-	{ "discord",        NULL,       "Discord Updater",       0,            1,           -1 },
+	/* class               instance    title                    tags mask     isfloating   monitor */
+    { "gnome-calculator",  NULL,       NULL,                    0,            1,           -1 },
+	{ "discord",           NULL,       "Discord Updater",       0,            1,           -1 },
 };
 
 /* layout(s) */
@@ -95,7 +100,7 @@ static const Layout layouts[] = {
 
 /* commands */
 static char dmenumon[2] = "0"; /* component of dmenucmd, manipulated in spawn() */
-static const char *dmenucmd[]      = { "dmenu_run_desktop", "-m", dmenumon, "-fn", dmenufont, "-nb", col_gray1, "-nf", col_gray3, "-sb", col_orange, "-sf", col_gray4, NULL };
+static const char *dmenucmd[]      = { "dmenu_run_desktop", "-m", dmenumon, "-fn", dmenufont, NULL };
 static const char *termcmd[]       = { "alacritty", NULL };
 static const char *browsercmd[]    = { "google-chrome-stable", NULL };
 static const char *clipcmd[]       = { "clipmenu", NULL };
