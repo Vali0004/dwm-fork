@@ -887,6 +887,7 @@ createmon(void)
 
 	m = ecalloc(1, sizeof(Monitor));
 	m->tagset[0] = m->tagset[1] = 1;
+	m->seltags = 0;
 	m->mfact = mfact;
 	m->nmaster = nmaster;
 	m->showbar = showbar;
