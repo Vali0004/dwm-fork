@@ -1782,7 +1782,7 @@ save_client_state(void)
 				for (Client *c = m->clients; c; c = c->next) {
 					YMAP(
 						YSTR("client_window_id"); YINT(c->win);
-            YSTR("title"); YSTR(c->name);
+						YSTR("title"); YSTR(c->name);
 						YSTR("tags"); YINT(c->tags);
 						YSTR("monitor"); YINT(m->num);
 						YSTR("is_focused"); YBOOL((selmon->sel == c) ? 1 : 0);
