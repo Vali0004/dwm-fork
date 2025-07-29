@@ -1776,26 +1776,24 @@ save_client_state(void)
         return;
 
     yajl_gen gen = yajl_gen_alloc(NULL);
-    yajl_gen_map_open(gen); // top-level map
-
-    // Save array of clients
-    YSTR("clients");
-    yajl_gen_array_open(gen);
-    for (Monitor *m = mons; m; m = m->next) {
-        for (Client *c = m->clients; c; c = c->next) {
-            yajl_gen_map_open(gen);
-            YSTR("client_window_id"); yajl_gen_integer(gen, c->win);
-            YSTR("tags"); yajl_gen_integer(gen, c->tags);
-            yajl_gen_map_close(gen);
-        }
-    }
-    yajl_gen_array_close(gen);
-
-    // Save selected monitor tagset
-    YSTR("selected_tagset");
-    yajl_gen_integer(gen, selmon->tagset[selmon->seltags]);
-
-    yajl_gen_map_close(gen); // end top-level map
+	YMAP(
+		YSTR("clients"); YARR(
+			for (Monitor *m = mons; m; m = m->next) {
+				for (Client *c = m->clients; c; c = c->next) {
+					char *window_name;
+					XFetchName(dpy, c->win, &window_name);
+					YMAP(
+						YSTR("client_window_id"); YINT(c->win);
+						YSTR("title"); YSTR(window_name);
+						YSTR("tags"); YINT(c->tags);
+						YSTR("monitor"); YINT(m->num);
+						YSTR("is_focused"); YBOOL((selmon->sel == c) ? 1 : 0);
+					)
+				}
+			}
+		)
+		YSTR("selected_tagset"); YINT(selmon->tagset[selmon->seltags]);
+	)
 
     const unsigned char *buf;
     size_t len;
