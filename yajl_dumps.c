@@ -186,11 +186,9 @@ dump_clients(yajl_gen gen, Monitor *mons)
     YSTR("clients"); YARR(
       for (Monitor *m = mons; m; m = m->next) {
         for (Client *c = m->clients; c; c = c->next) {
-          char *window_name;
-          XFetchName(dpy, c->win, &window_name);
           YMAP(
             YSTR("client_window_id"); YINT(c->win);
-            YSTR("title"); YSTR(window_name);
+            YSTR("title"); YSTR(c->name);
             YSTR("tags"); YINT(c->tags);
             YSTR("monitor"); YINT(m->num);
             YSTR("is_focused"); YBOOL((selmon->sel == c) ? 1 : 0);
