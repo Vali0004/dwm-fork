@@ -3,10 +3,10 @@
 /* appearance */
 static const unsigned int borderpx       = 1;               /* border pixel of windows */
 static const unsigned int snap           = 32;              /* snap pixel */
-static const unsigned int gappih         = 10;              /* horiz inner gap between windows */
-static const unsigned int gappiv         = 10;              /* vert inner gap between windows */
-static const unsigned int gappoh         = 5;               /* horiz outer gap between windows and screen edge */
-static const unsigned int gappov         = 5;               /* vert outer gap between windows and screen edge */
+static const unsigned int gappih         = 5;               /* horiz inner gap between windows */
+static const unsigned int gappiv         = 5;               /* vert inner gap between windows */
+static const unsigned int gappoh         = 10;              /* horiz outer gap between windows and screen edge */
+static const unsigned int gappov         = 10;              /* vert outer gap between windows and screen edge */
 static const unsigned int systraypinning = 0;               /* 0: sloppy systray follows selected monitor, >0: pin systray to monitor X */
 static const unsigned int systrayonleft  = 0;               /* 0: systray in the right corner, >0: systray on left of status text */
 static const unsigned int systrayspacing = 2;               /* systray spacing */
@@ -137,10 +137,10 @@ static const Key keys[] = {
 	{ MODKEY|ShiftMask,             XK_Return,                spawn,          {.v = browsercmd} },
 	{ MODKEY,                       XK_v,                     spawn,          {.v = clipcmd} },
 	{ MODKEY,                       XK_b,                     togglebar,      {0} },
-	{ MODKEY,                       XK_Left,                  movestack,      {.i = -1} },
-	{ MODKEY,                       XK_Right,                 movestack,      {.i = +1} },
-	{ MODKEY,                       XK_j,                     focusstack,     {.i = +1} },
-	{ MODKEY,                       XK_k,                     focusstack,     {.i = -1} },
+	{ MODKEY|ShiftMask,             XK_Left,                  movestack,      {.i = -1} },
+	{ MODKEY|ShiftMask,             XK_Right,                 movestack,      {.i = +1} },
+	{ MODKEY,                       XK_Left,                  focusstack,     {.i = +1} },
+	{ MODKEY,                       XK_Right,                 focusstack,     {.i = -1} },
 	{ MODKEY,                       XK_i,                     incnmaster,     {.i = +1} },
 	{ MODKEY,                       XK_p,                     incnmaster,     {.i = -1} },
 	{ MODKEY,                       XK_h,                     setmfact,       {.f = -0.05} },
