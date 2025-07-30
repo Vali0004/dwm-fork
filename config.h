@@ -61,13 +61,13 @@ static const Rule rules[] = {
 	 *	WM_CLASS(STRING) = instance, class
 	 *	WM_NAME(STRING) = title
 	 */
-	/* class               instance    title                    tags mask     isfloating   monitor   appicon*/
-    { "gnome-calculator",  NULL,       NULL,                    0,            1,           -1,        ""  },
-	{ "discord",           "discord",  "Discord Updater",       0,            1,           -1,        ""  },
-	{ "discord",           "discord",  NULL,                    0,            0,           -1,        ""  },
-	{ "google-chrome",     NULL,       NULL,                    0,            0,           -1,        ""  },
-	{ "cider",             NULL,       NULL,                    0,            0,           -1,        ""  },
-	{ "spotify",           NULL,       NULL,                    0,            0,           -1,        ""  },
+	/* class               instance          title                    tags mask     isfloating   monitor   appicon*/
+    { "gnome-calculator",  NULL,             NULL,                    0,            1,           -1,        ""  },
+	{ "discord",           "discord",        "Discord Updater",       0,            1,           -1,        ""  },
+	{ "discord",           "discord",        NULL,                    0,            0,           -1,        ""  },
+	{ "Google-chrome",     "google-chrome",  NULL,                    0,            0,           -1,        ""  },
+	{ "Cider",             "cider",          NULL,                    0,            0,           -1,        ""  },
+	{ "Spotify",           "spotify",        NULL,                    0,            0,           -1,        ""  },
 };
 
 /* layout(s) */
