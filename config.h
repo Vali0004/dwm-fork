@@ -64,9 +64,12 @@ static const Rule rules[] = {
 	/* class               instance          title                    tags mask     isfloating   monitor   appicon*/
     { "gnome-calculator",  NULL,             NULL,                    0,            1,           -1,        ""  },
 	{ "discord",           "discord",        "Discord Updater",       0,            1,           -1,        ""  },
+	{ "Alacritty",         "Alacritty",      NULL,                    0,            0,           -1,        ""  },
+	{ "Alacritty",         "Alacritty",      "vim",                   0,            0,           -1,        ""  },
 	{ "discord",           "discord",        NULL,                    0,            0,           -1,        ""  },
-	{ "Google-chrome",     "google-chrome",  NULL,                    0,            0,           -1,        ""  },
 	{ "Cider",             "cider",          NULL,                    0,            0,           -1,        "󰝚"  },
+	{ "Code",              "code",           NULL,                    0,            0,           -1,        "󰨞"  },
+	{ "Google-chrome",     "google-chrome",  NULL,                    0,            0,           -1,        ""  },
 	{ "Spotify",           "spotify",        NULL,                    0,            0,           -1,        "󰓇"  },
 };
 
