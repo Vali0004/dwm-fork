@@ -27,14 +27,14 @@ static const char col_gray2[]            = "#3B3B3B";
 static const char col_gray3[]            = "#bbbbbb";
 static const char col_gray4[]            = "#eeeeee";
 static const char col_yellow[]           = "#fffc43";
-static const char col_orange[]           = "#9437ff";
+static const char col_orange[]           = "#642cff";
 static const unsigned int baralpha       = 0xd0;
 static const unsigned int borderalpha    = OPAQUE;
 static const char *colors[][3] = {
     /*               fg          bg         border   */
     [SchemeNorm] = { col_gray3,  col_gray1, col_gray2 },
-    [SchemeSel]  = { col_gray3,  col_gray1, col_gray1 },
-	[SchemeTag]  = { col_gray3,  col_orange, col_gray1 },
+    [SchemeSel]  = { col_gray3,  col_gray1, col_orange },
+	[SchemeTag]  = { col_gray3,  col_orange, col_orange },
 	[SchemeUrg]  = { col_gray3,  col_yellow, col_gray1 },
 };
 static const unsigned int alphas[][3] = {
@@ -48,14 +48,26 @@ static const unsigned int alphas[][3] = {
 /* tagging */
 const char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
 
+/* appicons */
+/* NOTE: set to 0 to set to default (whitespace) */
+static char outer_separator_beg      = '[';
+static char outer_separator_end      = ']';
+static char inner_separator          = ' ';
+static unsigned truncate_icons_after = 2; /* will default to 1, that is the min */
+static char truncate_symbol[]         = "...";
+
 static const Rule rules[] = {
 	/* xprop(1):
 	 *	WM_CLASS(STRING) = instance, class
 	 *	WM_NAME(STRING) = title
 	 */
-	/* class               instance    title                    tags mask     isfloating   monitor */
-    { "gnome-calculator",  NULL,       NULL,                    0,            1,           -1 },
-	{ "discord",           NULL,       "Discord Updater",       0,            1,           -1 },
+	/* class               instance    title                    tags mask     isfloating   monitor   appicon*/
+    { "gnome-calculator",  NULL,       NULL,                    0,            1,           -1,        ""  },
+	{ "discord",           "discord",  "Discord Updater",       0,            1,           -1,        ""  },
+	{ "discord",           "discord",  NULL,                    0,            0,           -1,        ""  },
+	{ "google-chrome",     NULL,       NULL,                    0,            0,           -1,        ""  },
+	{ "cider",             NULL,       NULL,                    0,            0,           -1,        ""  },
+	{ "spotify",           NULL,       NULL,                    0,            0,           -1,        ""  },
 };
 
 /* layout(s) */

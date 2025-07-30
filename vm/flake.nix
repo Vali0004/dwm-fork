@@ -32,6 +32,7 @@
               hypervisor = "qemu";
               mem = 4096;
               qemu.extraArgs = [
+                "-display" "sdl,gl=on"
                 "-device" "e1000,netdev=net0"
                 "-netdev" "user,id=net0,hostfwd=tcp::5555-:22"
                 "-device" "virtio-keyboard"
