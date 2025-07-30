@@ -1246,11 +1246,9 @@ drawbar(Monitor *m)
 
 	resizebarwin(m);
 	for (c = m->clients; c; c = c->next) {
-		for (int i = 0; i < LENGTH(tags); i++) {
-			if (c->tags & (1 << i)) {
+		for (unsigned t = 1, i = 0; i < LENGTH(tags); t <<= 1, i++)  {
+			if (c->tags & t) {
 				clients_per_tag[i]++;
-				if (c->appicon && strlen(c->appicon) > 0)
-					icons_per_tag[i]++;
 			}
 		}
 		if (c->appicon && strlen(c->appicon) > 0) {
@@ -1259,8 +1257,8 @@ drawbar(Monitor *m)
 
 		occ |= c->tags == TAGMASK ? 0 : c->tags;
  		if (c->isurgent)
-			urg |= c->tags;
-	}
+ 			urg |= c->tags;
+ 	}
 
 	x = sp;
 	for (i = 0; i < LENGTH(tags); i++) {
@@ -1274,7 +1272,7 @@ drawbar(Monitor *m)
 		int offset = 0;
 
 		/* Shift right a little if this tag has an appicon */
-		if (icons_per_tag[i] > 0)
+		if (icons_per_tag[i] > 0 && icons_per_tag[i] <= 1)
 			offset = 2;
 
 		drw_text(drw, x, 0, w, bh, (lrpad / 2) - offset, m->tag_icons[i], urg & 1 << i);
