@@ -1253,9 +1253,9 @@ drawbar(Monitor *m)
 		}
 
 		occ |= c->tags == TAGMASK ? 0 : c->tags;
- 		if (c->isurgent)
- 			urg |= c->tags;
- 	}
+		if (c->isurgent)
+			urg |= c->tags;
+	}
 
 	x = sp;
 	for (i = 0; i < LENGTH(tags); i++) {
@@ -1272,7 +1272,7 @@ drawbar(Monitor *m)
 		if (icons_per_tag[i] > 0)
 			offset = 2;
 
-		drw_text(drw, x, 0, w, bh, (lrpad / 2) - offset, m->tag_icons[i], urg & 1 << i);
+		drw_text(drw, x - (icons_per_tag[i] > 0 && icons_per_tag[i] <= 1 ? 0 : offset), 0, w, bh, (lrpad / 2) - offset, m->tag_icons[i], urg & 1 << i);
 
 		if (occ & 1 << i && icons_per_tag[i] < clients_per_tag[i]) {
 			if (urg & 1 << i)
@@ -2018,6 +2018,7 @@ restore_client_state(void)
 void
 quit(const Arg *arg)
 {
+	unlink("/tmp/dwm-clients.json");
 	if (arg->i) {
 		save_client_state();
 		restart = 1;
