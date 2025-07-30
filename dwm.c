@@ -1232,7 +1232,9 @@ drawbar(Monitor *m)
 	}
 
 	int icons_per_tag[LENGTH(tags)];
+	int clients_per_tag[LENGTH(tags)];
 	memset(icons_per_tag, 0, LENGTH(tags) * sizeof(int));
+	memset(clients_per_tag, 0, LENGTH(tags) * sizeof(int));
 
 	for (int i = 0; i < LENGTH(tags); i++) {
 		if (m->tag_icons[i])
@@ -1244,17 +1246,24 @@ drawbar(Monitor *m)
 
 	resizebarwin(m);
 	for (c = m->clients; c; c = c->next) {
+		for (int i = 0; i < LENGTH(tags); i++) {
+			if (c->tags & (1 << i)) {
+				clients_per_tag[i]++;
+				if (c->appicon && strlen(c->appicon) > 0)
+					icons_per_tag[i]++;
+			}
+		}
 		if (c->appicon && strlen(c->appicon) > 0) {
 			applyappicon(m->tag_icons, icons_per_tag, c);
 		}
 
 		occ |= c->tags == TAGMASK ? 0 : c->tags;
  		if (c->isurgent)
- 			urg |= c->tags;
- 	}
+			urg |= c->tags;
+	}
 
 	x = sp;
- 	for (i = 0; i < LENGTH(tags); i++) {
+	for (i = 0; i < LENGTH(tags); i++) {
 		/* Do not draw vacant tags */
 		if(!(occ & 1 << i || m->tagset[m->seltags] & 1 << i))
 			continue;
@@ -1264,13 +1273,13 @@ drawbar(Monitor *m)
 
 		int offset = 0;
 
-		// Shift right a little if this tag has an appicon
+		/* Shift right a little if this tag has an appicon */
 		if (icons_per_tag[i] > 0)
-			offset = 1;
+			offset = 2;
 
-		drw_text(drw, x + offset, 0, w, bh, lrpad / 2, m->tag_icons[i], urg & 1 << i);
+		drw_text(drw, x, 0, w, bh, (lrpad / 2) - offset, m->tag_icons[i], urg & 1 << i);
 
-		if (occ & 1 << i && icons_per_tag[i] == 0) {
+		if (occ & 1 << i && icons_per_tag[i] < clients_per_tag[i]) {
 			if (urg & 1 << i)
 				drw_setscheme(drw, scheme[SchemeUrg]);
 			if (!(m->tagset[m->seltags] & 1 << i))
@@ -1278,6 +1287,7 @@ drawbar(Monitor *m)
 					m == selmon && selmon->sel && selmon->sel->tags & 1 << i,
 					0);
 		}
+
  		x += w;
  	}
 
