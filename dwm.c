@@ -1122,22 +1122,12 @@ drawstatusbar(Monitor *m, int bh, char *stext)
 void
 remove_outer_separators(char **str)
 {
-	size_t clean_tag_name_len = strlen(*str) - 2;
+	size_t len = strlen(*str);
+	if (len <= 2)
+		return;
 
-	char *temp_tag_name = (char*)malloc(clean_tag_name_len + 1);
-
-	if (temp_tag_name == NULL)
-		perror("dwm: malloc()");
-
-	memset(temp_tag_name, 0, clean_tag_name_len + 1);
-
-	char *clean_tag_name_beg = *str + 1;
-	strncpy(temp_tag_name, 
-			clean_tag_name_beg, 
-			clean_tag_name_len);
-
-	free(*str);
-	*str = temp_tag_name;
+	memmove(*str, *str + 1, len - 2);
+	(*str)[len - 2] = '\0';
 }
 
 void
@@ -1146,20 +1136,22 @@ appiconsappend(char **str, const char *appicon, size_t new_size)
 	char *temp_tag_name = (char*)malloc(new_size);
 	if (temp_tag_name == NULL)
 		perror("dwm: malloc()");
-
-	/* NOTE: Example format of temp_tag_name (with two appicons):
-	 *  <outer_sep_beg><appicon><inner_sep><appicon><outer_sep_end>
-	 */
-	temp_tag_name = memset(temp_tag_name, 0, new_size);
+	memset(temp_tag_name, 0, new_size);
 
 	temp_tag_name[0] = outer_separator_beg;
-	temp_tag_name[new_size - 2] = outer_separator_end;
 
 	strncpy(temp_tag_name + 1, *str, strlen(*str));
-	temp_tag_name[strlen(temp_tag_name)] = inner_separator;
 
-	strncpy(temp_tag_name + strlen(temp_tag_name),
-			appicon, strlen(appicon));
+	size_t len = strlen(temp_tag_name);
+	temp_tag_name[len] = inner_separator;
+
+	len = strlen(temp_tag_name);
+	strncpy(temp_tag_name + len, appicon, strlen(appicon));
+
+	len = strlen(temp_tag_name);
+	temp_tag_name[len] = ' ';
+	temp_tag_name[len + 1] = outer_separator_end;
+	temp_tag_name[len + 2] = '\0';
 
 	free(*str);
 	*str = temp_tag_name;
@@ -1170,9 +1162,9 @@ applyappicon(char *tag_icons[], int *icons_per_tag, const Client *c)
 {
 	for (unsigned t = 1, i = 0; i < LENGTH(tags); t <<= 1, i++)  {
 		if (c->tags & t) {
-			if (icons_per_tag[i] == 0)
+			if (icons_per_tag[i] == 0) {
 				strncpy(tag_icons[i], c->appicon, strlen(c->appicon) + 1);
-			else {
+			} else {
 				char *icon = NULL;
 				if (icons_per_tag[i] < truncate_icons_after)
 					icon = c->appicon;
@@ -1272,7 +1264,7 @@ drawbar(Monitor *m)
 		int offset = 0;
 
 		/* Shift right a little if this tag has an appicon */
-		if (icons_per_tag[i] > 0 && icons_per_tag[i] <= 1)
+		if (icons_per_tag[i] > 0)
 			offset = 2;
 
 		drw_text(drw, x, 0, w, bh, (lrpad / 2) - offset, m->tag_icons[i], urg & 1 << i);
@@ -1286,7 +1278,7 @@ drawbar(Monitor *m)
 					0);
 		}
 
- 		x += w;
+ 		x += w - (icons_per_tag[i] > 0 && icons_per_tag[i] <= 1 ? 0 : (offset * 2));
  	}
 
  	w = TEXTW(m->ltsymbol);
