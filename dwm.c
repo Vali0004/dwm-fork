@@ -182,6 +182,7 @@ struct Monitor {
 	TagState tagstate;
 	int showbar;
 	int topbar;
+	int enablegaps;
 	Client *clients;
 	Client *sel;
 	Client *lastsel;
@@ -353,6 +354,7 @@ static pid_t statuspid = -1;
 static int screen;
 static int sw, sh;           /* X display screen geometry width, height */
 static int bh;               /* bar height */
+static int enablegaps = 1;   /* enables gaps, used by togglegaps */
 static int lrpad;            /* sum of left and right padding for text */
 static int vp;               /* vertical padding for bar */
 static int sp;               /* side padding for bar */
@@ -922,6 +924,7 @@ createmon(void)
 	m->nmaster = nmaster;
 	m->showbar = showbar;
 	m->topbar = topbar;
+	m->enablegaps = enablegaps;
 	m->bh = bh;
 	m->gappih = gappih;
 	m->gappiv = gappiv;
@@ -950,6 +953,8 @@ createmon(void)
 		m->pertag->sellts[i] = m->sellt;
 
 		m->pertag->showbars[i] = m->showbar;
+
+		m->pertag->enablegaps[i] = m->enablegaps;
 	}
 
 	return m;
@@ -3598,8 +3603,11 @@ void previewallwin(void) {
 
 	for (c = m->clients; c; c = c->next)
 		n++;
+
 	if (n == 0)
 		return;
+
+	index = (n > 1 ? 1 : 0);
 
 	clients = calloc(n, sizeof(Client *));
 	if (!clients)
