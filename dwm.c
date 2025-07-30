@@ -1962,12 +1962,13 @@ save_client_state(void)
 	yajl_gen_free(gen);
 }
 
+static int restored_state = 0;
+
 void
 restore_client_state(void)
 {
 	FILE *fp = fopen("/tmp/dwm-clients.json", "r");
 	if (!fp)
-	
 		return;
 
 	fseek(fp, 0, SEEK_END);
@@ -1988,6 +1989,7 @@ restore_client_state(void)
 	// Restore client tag states
 	yajl_val clients = yajl_tree_get(root, (const char *[]){"clients", 0}, yajl_t_array);
 	if (clients && YAJL_IS_ARRAY(clients)) {
+		restored_state = 1;
 		for (size_t i = 0; i < clients->u.array.len; ++i) {
 			yajl_val entry = clients->u.array.values[i];
 			yajl_val id = yajl_tree_get(entry, (const char *[]){"client_window_id", 0}, yajl_t_number);
@@ -3872,8 +3874,9 @@ main(int argc, char *argv[])
 		die("pledge");
 #endif /* __OpenBSD__ */
 	scan();
-	runautostart();
 	restore_client_state();
+	if (!restored_state)
+		runautostart();
 	run();
 	if (restart) {
 		execvp(argv[0], argv);

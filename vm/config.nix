@@ -31,7 +31,6 @@
       alacritty-graphics
       alsa-utils
       bridge-utils
-      busybox
       curl
       clipmenu
       discord
