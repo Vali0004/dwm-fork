@@ -70,8 +70,9 @@ static const Rule rules[] = {
 	{ "Cider",             "cider",          NULL,                    0,            0,           -1,        "󰝚"  },
 	{ "Code",              "code",           NULL,                    0,            0,           -1,        "󰨞"  },
 	{ "Google-chrome",     "google-chrome",  NULL,                    0,            0,           -1,        ""  },
-	{ "mpv",                "mpvk",          NULL,                    0,            0,           -1,        ""  },
+	{ "mpv",               "mpvk",           NULL,                    0,            0,           -1,        ""  },
 	{ "Spotify",           "spotify",        NULL,                    0,            0,           -1,        "󰓇"  },
+	{ "steam",             "steamwebhelper", NULL,                    0,            0,           -1,        ""  },
 };
 
 /* layout(s) */
@@ -119,14 +120,14 @@ static char dmenumon[2] = "0"; /* component of dmenucmd, manipulated in spawn() 
 static const char *dmenucmd[]      = { "dmenu_run_desktop", "-m", dmenumon, "-fn", dmenufont, NULL };
 static const char *termcmd[]       = { "alacritty", NULL };
 static const char *browsercmd[]    = { "google-chrome-stable", NULL };
-static const char *clipcmd[]       = { "clipmenu", NULL };
+static const char *clipcmd[]       = { "clipmenu-paste", NULL };
 static const char *screenshotcmd[] = { "flameshot_fuckk_lol", NULL };
 static const char *flameshotcmd[]  = { "flameshot", "gui", "--accept-on-select", "--clipboard", NULL };
 static const char *lowercmd[]      = { "pactl", "set-sink-volume", "@DEFAULT_SINK@", "-5%", NULL };
 static const char *raisecmd[]      = { "pactl", "set-sink-volume", "@DEFAULT_SINK@", "+5%", NULL };
 static const char *mutecmd[]       = { "pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle", NULL };
 static const char *playpausecmd[]  = { "playerctl", "play-pause", NULL };
-static const char *nextcmd[]       = { "playerctl", "next", NULL };
+static const char *nextcmd[]       = { "playerctl", "next", NUL };
 static const char *prevcmd[]       = { "playerctl", "previous", NULL };
 
 #include <X11/XF86keysym.h>

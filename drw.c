@@ -280,6 +280,13 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 						ellipsis_w = w - ew;
 						ellipsis_len = utf8strlen;
 					}
+					if ((
+							(utf8codepoint >= 0xe000 && utf8codepoint <= 0xf8ff) ||
+							(utf8codepoint >= 0xf0000 && utf8codepoint <= 0xffffd) ||
+							(utf8codepoint >= 0x100000 && utf8codepoint <= 0x10fffd)
+						)) {
+						tmpw += 4;
+					}
 
 					if (ew + tmpw > w) {
 						overflow = 1;

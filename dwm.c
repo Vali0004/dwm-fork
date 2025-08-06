@@ -1154,9 +1154,8 @@ appiconsappend(char **str, const char *appicon, size_t new_size)
 	strncpy(temp_tag_name + len, appicon, strlen(appicon));
 
 	len = strlen(temp_tag_name);
-	temp_tag_name[len] = ' ';
-	temp_tag_name[len + 1] = outer_separator_end;
-	temp_tag_name[len + 2] = '\0';
+	temp_tag_name[len] = outer_separator_end;
+	temp_tag_name[len + 1] = '\0';
 
 	free(*str);
 	*str = temp_tag_name;
@@ -1179,7 +1178,7 @@ applyappicon(char *tag_icons[], int *icons_per_tag, const Client *c)
 					icons_per_tag[i]++;
 					continue;
 				}
-					
+
 				/* remove outer separators from previous iterations
 				 * otherwise they get applied recursively */
 				if (icons_per_tag[i] > 1) {
@@ -1190,7 +1189,7 @@ applyappicon(char *tag_icons[], int *icons_per_tag, const Client *c)
 				size_t inner_separator_size = 1;
 
 				size_t new_size = strlen(tag_icons[i])
-					+ outer_separators_size 
+					+ outer_separators_size
 					+ inner_separator_size
 					+ strlen(icon)
 					+ 1;
