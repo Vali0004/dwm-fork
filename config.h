@@ -127,7 +127,7 @@ static const char *lowercmd[]      = { "pactl", "set-sink-volume", "@DEFAULT_SIN
 static const char *raisecmd[]      = { "pactl", "set-sink-volume", "@DEFAULT_SINK@", "+5%", NULL };
 static const char *mutecmd[]       = { "pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle", NULL };
 static const char *playpausecmd[]  = { "playerctl", "play-pause", NULL };
-static const char *nextcmd[]       = { "playerctl", "next", NUL };
+static const char *nextcmd[]       = { "playerctl", "next", NULL };
 static const char *prevcmd[]       = { "playerctl", "previous", NULL };
 
 #include <X11/XF86keysym.h>
