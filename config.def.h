@@ -40,6 +40,23 @@ static const unsigned int alphas[][3]      = {
 	[SchemeSel]  = { OPAQUE, baralpha, borderalpha },
 };
 
+static const char *colors[][3] = {
+    /*               fg          bg          border   */
+	[SchemeNorm]  = { col_gray3, col_gray1,  col_gray2 },
+	[SchemeSel]   = { col_gray4, col_cyan,   col_cyan },
+	[SchemeTag]   = { col_gray3, col_cyan,   col_cyan },
+	[SchemeUrg]   = { col_gray3, col_cyan,   col_gray1 },
+	[SchemeHover] = { col_gray3, col_gray1,  col_cyan },
+};
+static const unsigned int alphas[][3] = {
+    /*                fg      bg        border      */
+    [SchemeNorm]  = { OPAQUE, baralpha, borderalpha },
+    [SchemeSel]   = { OPAQUE, baralpha, borderalpha },
+	[SchemeTag]   = { OPAQUE, baralpha, borderalpha },
+	[SchemeUrg]   = { OPAQUE, baralpha, borderalpha },
+	[SchemeHover] = { OPAQUE, baralpha, borderalpha },
+};
+
 /* tagging */
 const char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
 

@@ -27,22 +27,25 @@ static const char col_gray2[]            = "#3B3B3B";
 static const char col_gray3[]            = "#bbbbbb";
 static const char col_gray4[]            = "#eeeeee";
 static const char col_yellow[]           = "#fffc43";
-static const char col_orange[]           = "#642cff";
+static const char col_purple[]           = "#642cff";
+static const char col_light[]            = "#895eff";
 static const unsigned int baralpha       = 0xd0;
 static const unsigned int borderalpha    = OPAQUE;
 static const char *colors[][3] = {
     /*               fg          bg         border   */
-    [SchemeNorm] = { col_gray3,  col_gray1, col_gray2 },
-    [SchemeSel]  = { col_gray3,  col_gray1, col_orange },
-	[SchemeTag]  = { col_gray3,  col_orange, col_orange },
-	[SchemeUrg]  = { col_gray3,  col_yellow, col_gray1 },
+    [SchemeNorm]  = { col_gray3,  col_gray1, col_gray2 },
+    [SchemeSel]   = { col_gray3,  col_gray1, col_purple },
+	[SchemeTag]   = { col_gray3,  col_purple, col_purple },
+	[SchemeUrg]   = { col_gray3,  col_yellow, col_gray1 },
+	[SchemeHover] = { col_gray3,  col_gray1,  col_light },
 };
 static const unsigned int alphas[][3] = {
-    /*               fg      bg        border      */
-    [SchemeNorm] = { OPAQUE, baralpha, borderalpha },
-    [SchemeSel]  = { OPAQUE, baralpha, borderalpha },
-	[SchemeTag]  = { OPAQUE, baralpha, borderalpha },
-	[SchemeUrg]  = { OPAQUE, baralpha, borderalpha },
+    /*                fg      bg        border      */
+    [SchemeNorm]  = { OPAQUE, baralpha, borderalpha },
+    [SchemeSel]   = { OPAQUE, baralpha, borderalpha },
+	[SchemeTag]   = { OPAQUE, baralpha, borderalpha },
+	[SchemeUrg]   = { OPAQUE, baralpha, borderalpha },
+	[SchemeHover] = { OPAQUE, baralpha, borderalpha },
 };
 
 /* tagging */
@@ -73,6 +76,7 @@ static const Rule rules[] = {
 	{ "mpv",               "mpvk",           NULL,                    0,            0,           -1,        ""  },
 	{ "Spotify",           "spotify",        NULL,                    0,            0,           -1,        "󰓇"  },
 	{ "steam",             "steamwebhelper", NULL,                    0,            0,           -1,        ""  },
+	{ "Xenon",             "Xenon",          NULL,                    0,            1,           -1,        ""  },
 };
 
 /* layout(s) */

@@ -81,7 +81,7 @@
 
 /* enums */
 enum { CurNormal, CurResize, CurMove, CurLast }; /* cursor */
-enum { SchemeNorm, SchemeSel, SchemeTag, SchemeUrg }; /* color schemes */
+enum { SchemeNorm, SchemeSel, SchemeTag, SchemeUrg, SchemeHover }; /* color schemes */
 enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
        NetSystemTray, NetSystemTrayOP, NetSystemTrayOrientation, NetSystemTrayOrientationHorz, NetSystemTrayVisual,
        NetWMFullscreen, NetActiveWindow, NetWMWindowType, NetWMWindowTypeDock,
@@ -3595,13 +3595,18 @@ zoom(const Arg *arg)
 	pop(c);
 }
 
-void previewallwin(void) {
+void
+previewallwin(void)
+{
 	Monitor *m = selmon;
 	Client *c, *focus_c = NULL;
 	Client **clients;
 	unsigned int n = 0, i;
 	XEvent event;
-	int done = 0, index = 0;
+	int done = 0;
+	int kb_index = 0;
+	int mouse_index = -1;
+	int active_mode = 0;
 
 	for (c = m->clients; c; c = c->next)
 		n++;
@@ -3609,7 +3614,7 @@ void previewallwin(void) {
 	if (n == 0)
 		return;
 
-	index = (n > 1 ? 1 : 0);
+	kb_index = (n > 1 ? 1 : 0);
 
 	clients = calloc(n, sizeof(Client *));
 	if (!clients)
@@ -3618,7 +3623,7 @@ void previewallwin(void) {
 	for (c = m->clients, i = 0; c; c = c->next, i++) {
 		if (c->isfullscreen)
 			togglefullscr(&(Arg){0});
-		c->pre.orig_image = getwindowximage(c); 
+		c->pre.orig_image = getwindowximage(c);
 		clients[i] = c;
 	}
 
@@ -3653,10 +3658,21 @@ void previewallwin(void) {
 
 	while (!done) {
 		for (i = 0; i < n; i++) {
-			XSetWindowBorder(dpy, clients[i]->pre.win,
-				i == index ? scheme[SchemeSel][ColBorder].pixel : scheme[SchemeNorm][ColBorder].pixel);
-		}
+			unsigned long color = scheme[SchemeNorm][ColBorder].pixel;
 
+			if (i == kb_index && active_mode == 0) {
+				/* keyboard-driven selection */
+				color = scheme[SchemeSel][ColBorder].pixel;
+			} else if (i == mouse_index && active_mode == 1) {
+				/* mouse click selection (committed) */
+				color = scheme[SchemeSel][ColBorder].pixel;
+			} else if (i == mouse_index && active_mode == 0) {
+				/* just hovering */
+				color = scheme[SchemeHover][ColBorder].pixel;
+			}
+
+			XSetWindowBorder(dpy, clients[i]->pre.win, color);
+		}
 		XNextEvent(dpy, &event);
 
 		switch (event.type) {
@@ -3665,8 +3681,9 @@ void previewallwin(void) {
 				Window clicked = event.xbutton.window;
 				for (i = 0; i < n; i++) {
 					if (clicked == clients[i]->pre.win) {
+						mouse_index = i;
+						active_mode = 1;
 						focus_c = clients[i];
-						index = i;
 						done = 1;
 						break;
 					}
@@ -3677,7 +3694,8 @@ void previewallwin(void) {
 		case KeyPress: {
 			KeySym sym = XLookupKeysym(&event.xkey, 0);
 			if (sym == XK_Tab) {
-				index = (index + 1) % n;
+				kb_index = (kb_index + 1) % n;
+				active_mode = 0;
 			} else if (sym == XK_Escape) {
 				focus_c = NULL;
 				done = 1;
@@ -3688,17 +3706,20 @@ void previewallwin(void) {
 		case KeyRelease: {
 			KeySym sym = XLookupKeysym(&event.xkey, 0);
 			if (sym == XK_Alt_L || sym == XK_Alt_R) {
-				focus_c = clients[index];
+				if (active_mode == 0)
+					focus_c = clients[kb_index];
 				done = 1;
 			}
 			break;
 		}
 
 		case EnterNotify:
-			for (i = 0; i < n; i++) {
-				if (event.xcrossing.window == clients[i]->pre.win) {
-					index = i;
-					break;
+			if (event.xcrossing.mode == NotifyNormal) {
+				for (i = 0; i < n; i++) {
+					if (event.xcrossing.window == clients[i]->pre.win) {
+						mouse_index = -1;  /* no hover */
+						break;
+					}
 				}
 			}
 			break;
