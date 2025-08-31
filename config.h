@@ -76,7 +76,8 @@ static const Rule rules[] = {
 	{ "mpv",               "mpvk",           NULL,                    0,            0,           -1,        ""  },
 	{ "Spotify",           "spotify",        NULL,                    0,            0,           -1,        "󰓇"  },
 	{ "steam",             "steamwebhelper", NULL,                    0,            0,           -1,        ""  },
-	{ "Xenon",             "Xenon",          NULL,                    0,            1,           -1,        ""  },
+	{ "Xenon",             "Xenon",          NULL,                    0,            1,           -1,        ""   },
+	{ "Unity",             "Unity",          NULL,                    0,            0,           -1,        ""  },
 };
 
 /* layout(s) */
