@@ -1222,10 +1222,8 @@ drawbar(Monitor *m)
 	}
 
 	/* draw status first so it can be overdrawn by tags later */
-	if (m == selmon) { /* status is only drawn on selected monitor */
-		tw = statusw = m->ww - drawstatusbar(m, bh, stext);
-		tw += 2 * sp;
-	}
+	tw = statusw = m->ww - drawstatusbar(m, bh, stext);
+	tw += 2 * sp;
 
 	int icons_per_tag[LENGTH(tags)];
 	int clients_per_tag[LENGTH(tags)];
@@ -1806,14 +1804,31 @@ movemouse(const Arg *arg)
 		return;
 	if (c->isfullscreen) /* no support moving fullscreen windows by mouse */
 		return;
-	restack(selmon);
+
+	if (!getrootptr(&x, &y))
+		return;
+
 	ocx = c->x;
 	ocy = c->y;
+
+	const int edge_thickness = 5;   /* how close to an edge counts as draggable */
+	const int title_height   = 15;  /* top strip that counts as title bar */
+
+	/* check if click is in draggable region */
+	int in_title = (y >= c->y && y < c->y + title_height);
+	int on_edge =
+		(x >= c->x && x < c->x + edge_thickness) ||
+		(x <= c->x + c->w && x > c->x + c->w - edge_thickness) ||
+		(y >= c->y && y < c->y + edge_thickness) ||
+		(y <= c->y + c->h && y > c->y + c->h - edge_thickness);
+
+	if (!in_title && !on_edge)
+		return; /* disallow moves from window middle */
+
 	if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
 		None, cursor[CurMove]->cursor, CurrentTime) != GrabSuccess)
 		return;
-	if (!getrootptr(&x, &y))
-		return;
+
 	do {
 		XMaskEvent(dpy, MOUSEMASK|ExposureMask|SubstructureRedirectMask, &ev);
 		switch(ev.type) {
@@ -1829,6 +1844,7 @@ movemouse(const Arg *arg)
 
 			nx = ocx + (ev.xmotion.x - x);
 			ny = ocy + (ev.xmotion.y - y);
+
 			if (abs(selmon->wx - nx) < snap)
 				nx = selmon->wx;
 			else if (abs((selmon->wx + selmon->ww) - (nx + WIDTH(c))) < snap)
@@ -1837,15 +1853,19 @@ movemouse(const Arg *arg)
 				ny = selmon->wy;
 			else if (abs((selmon->wy + selmon->wh) - (ny + HEIGHT(c))) < snap)
 				ny = selmon->wy + selmon->wh - HEIGHT(c);
+
 			if (!c->isfloating && selmon->lt[selmon->sellt]->arrange
 			&& (abs(nx - c->x) > snap || abs(ny - c->y) > snap))
 				togglefloating(NULL);
+
 			if (!selmon->lt[selmon->sellt]->arrange || c->isfloating)
 				resize(c, nx, ny, c->w, c->h, 1);
 			break;
 		}
 	} while (ev.type != ButtonRelease);
+
 	XUngrabPointer(dpy, CurrentTime);
+
 	if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
 		sendmon(c, m);
 		selmon = m;
@@ -2085,7 +2105,8 @@ resizeclient(Client *c, int x, int y, int w, int h)
 void
 resizemouse(const Arg *arg)
 {
-	int ocx, ocy, nw, nh;
+	int ocx, ocy, ow, oh, nx, ny, nw, nh;
+	int x, y;
 	Client *c;
 	Monitor *m;
 	XEvent ev;
@@ -2095,16 +2116,37 @@ resizemouse(const Arg *arg)
 		return;
 	if (c->isfullscreen) /* no support resizing fullscreen windows by mouse */
 		return;
-	restack(selmon);
+
+	if (!getrootptr(&x, &y))
+		return;
+
 	ocx = c->x;
 	ocy = c->y;
+	ow  = c->w;
+	oh  = c->h;
+
+	const int edge_thickness = 5;
+	const int title_height   = 15;
+
+	/* figure out what edge was clicked */
+	int left   = (x >= c->x && x <  c->x + edge_thickness);
+	int right  = (x <= c->x + c->w && x > c->x + c->w - edge_thickness);
+	int top    = (y >= c->y && y <  c->y + edge_thickness);
+	int bottom = (y <= c->y + c->h && y > c->y + c->h - edge_thickness);
+
+	/* disallow resize from top middle (title bar) */
+	if ((y >= c->y && y < c->y + title_height) && !left && !right)
+		return;
+	if (!(left || right || top || bottom))
+		return; /* not on an edge */
+
 	if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
 		None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess)
 		return;
-	XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, c->w + c->bw - 1, c->h + c->bw - 1);
+
 	do {
 		XMaskEvent(dpy, MOUSEMASK|ExposureMask|SubstructureRedirectMask, &ev);
-		switch(ev.type) {
+		switch (ev.type) {
 		case ConfigureRequest:
 		case Expose:
 		case MapRequest:
@@ -2115,23 +2157,34 @@ resizemouse(const Arg *arg)
 				continue;
 			lasttime = ev.xmotion.time;
 
-			nw = MAX(ev.xmotion.x - ocx - 2 * c->bw + 1, 1);
-			nh = MAX(ev.xmotion.y - ocy - 2 * c->bw + 1, 1);
-			if (c->mon->wx + nw >= selmon->wx && c->mon->wx + nw <= selmon->wx + selmon->ww
-			&& c->mon->wy + nh >= selmon->wy && c->mon->wy + nh <= selmon->wy + selmon->wh)
-			{
-				if (!c->isfloating && selmon->lt[selmon->sellt]->arrange
-				&& (abs(nw - c->w) > snap || abs(nh - c->h) > snap))
-					togglefloating(NULL);
+			nx = ocx;
+			ny = ocy;
+			nw = ow;
+			nh = oh;
+
+			if (left) {
+				nw = MAX(ow - (ev.xmotion.x - ocx), 1);
+				nx = ev.xmotion.x;
+			} else if (right) {
+				nw = MAX(ev.xmotion.x - ocx, 1);
 			}
+			if (top) {
+				nh = MAX(oh - (ev.xmotion.y - ocy), 1);
+				ny = ev.xmotion.y;
+			} else if (bottom) {
+				nh = MAX(ev.xmotion.y - ocy, 1);
+			}
+
+			if (!c->isfloating && selmon->lt[selmon->sellt]->arrange)
+				togglefloating(NULL);
+
 			if (!selmon->lt[selmon->sellt]->arrange || c->isfloating)
-				resize(c, c->x, c->y, nw, nh, 1);
+				resize(c, nx, ny, nw, nh, 1);
 			break;
 		}
 	} while (ev.type != ButtonRelease);
-	XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, c->w + c->bw - 1, c->h + c->bw - 1);
+
 	XUngrabPointer(dpy, CurrentTime);
-	while (XCheckMaskEvent(dpy, EnterWindowMask, &ev));
 	if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
 		sendmon(c, m);
 		selmon = m;
