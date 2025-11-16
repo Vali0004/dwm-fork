@@ -2034,6 +2034,7 @@ restore_client_state(void)
 				continue;
 
 			Window win = (Window)YAJL_GET_INTEGER(id);
+			unsigned int utags = (unsigned int)YAJL_GET_INTEGER(tags);
 
 			Client *c = wintoclient(win);
 			if (!c)
@@ -2047,7 +2048,7 @@ restore_client_state(void)
 				}
 			}
 
-			c->tags = tags & TAGMASK;
+			c->tags = utags & TAGMASK;
 			if (foc && YAJL_IS_TRUE(foc))
 				focused_win = win;
 		}
