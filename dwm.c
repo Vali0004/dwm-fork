@@ -2062,7 +2062,7 @@ restore_client_state(void)
         	if (!mxv || !myv || !mwv || !mhv || !selv || !seltv)
 				continue;
 
-			Monitor *m = find_monitor_by_geom(
+			Monitor *m = find_monitor_by_geometry(
 				(int)YAJL_GET_INTEGER(mxv),
 				(int)YAJL_GET_INTEGER(myv),
 				(int)YAJL_GET_INTEGER(mwv),
@@ -2112,10 +2112,10 @@ restore_client_state(void)
 
 			yajl_val id  = yajl_tree_get(entry, (const char *[]){"client_window_id", 0}, yajl_t_number);
 			yajl_val mon = yajl_tree_get(entry, (const char *[]){"monitor", 0}, yajl_t_number);
-			yajl_val mxv = yajl_tree_get(mentry, (const char*[]){"mx", 0}, yajl_t_number);
-			yajl_val myv = yajl_tree_get(mentry, (const char*[]){"my", 0}, yajl_t_number);
-			yajl_val mwv = yajl_tree_get(mentry, (const char*[]){"mw", 0}, yajl_t_number);
-			yajl_val mhv = yajl_tree_get(mentry, (const char*[]){"mh", 0}, yajl_t_number);
+			yajl_val mxv = yajl_tree_get(entry, (const char*[]){"mx", 0}, yajl_t_number);
+			yajl_val myv = yajl_tree_get(entry, (const char*[]){"my", 0}, yajl_t_number);
+			yajl_val mwv = yajl_tree_get(entry, (const char*[]){"mw", 0}, yajl_t_number);
+			yajl_val mhv = yajl_tree_get(entry, (const char*[]){"mh", 0}, yajl_t_number);
 			yajl_val foc = yajl_tree_get(entry, (const char *[]){"is_focused", 0}, yajl_t_any);
 
 			if (!id)
@@ -2127,7 +2127,7 @@ restore_client_state(void)
 				continue;
 
 			if (mon && YAJL_IS_NUMBER(mon)) {
-				Monitor *target = find_monitor_by_geom(
+				Monitor *target = find_monitor_by_geometry(
 					(int)YAJL_GET_INTEGER(mxv),
 					(int)YAJL_GET_INTEGER(myv),
 					(int)YAJL_GET_INTEGER(mwv),
