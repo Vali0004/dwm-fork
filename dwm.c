@@ -2047,7 +2047,7 @@ restore_client_state(void)
 				}
 			}
 
-			c->tags = utags & TAGMASK;
+			c->tags = tags & TAGMASK;
 			if (foc && YAJL_IS_TRUE(foc))
 				focused_win = win;
 		}
