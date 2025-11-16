@@ -11,13 +11,9 @@
       url = "github:microvm-nix/microvm.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    xlibre-overlay = {
-      url = "git+https://codeberg.org/takagemacoed/xlibre-overlay";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, microvm, xlibre-overlay }: let
+  outputs = { self, nixpkgs, microvm }: let
     system = "x86_64-linux";
   in {
     packages.${system} = {
@@ -28,8 +24,6 @@
       dwm-vm = nixpkgs.lib.nixosSystem {
         inherit system;
         modules = [
-          xlibre-overlay.nixosModules.overlay-xlibre-xserver
-          xlibre-overlay.nixosModules.overlay-all-xlibre-drivers
           microvm.nixosModules.microvm
           ({ config, lib, pkgs, ... }: {
             imports = [
