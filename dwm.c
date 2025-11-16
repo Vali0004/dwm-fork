@@ -2012,132 +2012,102 @@ restore_client_state(void)
 	if (!fp)
 		return;
 
-	if (fseek(fp, 0, SEEK_END) != 0) {
-		fclose(fp);
-		return;
-	}
+	fseek(fp, 0, SEEK_END);
 	long fsize = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+
 	if (fsize <= 0) {
 		fclose(fp);
 		return;
 	}
-	if (fseek(fp, 0, SEEK_SET) != 0) {
-		fclose(fp);
-		return;
-	}
 
-	char *json = malloc((size_t)fsize + 1);
-	if (!json) {
-		fclose(fp);
-		return;
-	}
-
-	size_t nread = fread(json, 1, (size_t)fsize, fp);
+	char *json = malloc(fsize + 1);
+	fread(json, 1, fsize, fp);
 	fclose(fp);
-	if (nread != (size_t)fsize) {
-		free(json);
-		return;
-	}
 	json[fsize] = '\0';
 
 	yajl_val root = yajl_tree_parse(json, NULL, 0);
 	if (!root || !YAJL_IS_OBJECT(root)) {
-		if (root)
-			yajl_tree_free(root);
+		if (root) yajl_tree_free(root);
 		free(json);
 		return;
 	}
 
 	restored_state = 1;
 
-	yajl_val clients = yajl_tree_get(root, (const char *[]){"clients", 0}, yajl_t_array);
-
-	Window focused_win = 0;
-
-	if (clients && YAJL_IS_ARRAY(clients)) {
-		size_t len = clients->u.array.len;
-
-		for (size_t i = 0; i < len; ++i) {
-			yajl_val entry = clients->u.array.values[i];
-			if (!entry || !YAJL_IS_OBJECT(entry))
-				continue;
-
-			yajl_val id  = yajl_tree_get(entry, (const char *[]){"client_window_id", 0}, yajl_t_number);
-			yajl_val mon = yajl_tree_get(entry, (const char *[]){"monitor", 0}, yajl_t_number);
-
-			if (!id)
-				continue;
-
-			Window win = (Window)YAJL_GET_INTEGER(id);
-			Client *c = wintoclient(win);
-			if (!c)
-				continue;
-
-			if (mon && YAJL_IS_NUMBER(mon)) {
-				int mon_num = (int)YAJL_GET_INTEGER(mon);
-				Monitor *target = find_monitor_by_num(mon_num);
-				if (target && c->mon != target) {
-					sendmon(c, target);
-				}
-			}
-		}
-
-		for (size_t i = 0; i < len; ++i) {
-			yajl_val entry = clients->u.array.values[i];
-			if (!entry || !YAJL_IS_OBJECT(entry))
-				continue;
-
-			yajl_val id   = yajl_tree_get(entry, (const char *[]){"client_window_id", 0}, yajl_t_number);
-			yajl_val tags = yajl_tree_get(entry, (const char *[]){"tags", 0}, yajl_t_number);
-			yajl_val foc  = yajl_tree_get(entry, (const char *[]){"is_focused", 0}, yajl_t_any);
-
-			if (!id || !tags)
-				continue;
-
-			Window win = (Window)YAJL_GET_INTEGER(id);
-			unsigned int utags = (unsigned int)YAJL_GET_INTEGER(tags);
-
-			Client *c = wintoclient(win);
-			if (!c)
-				continue;
-
-			c->tags = utags & TAGMASK;
-
-			if (foc && YAJL_IS_TRUE(foc))
-				focused_win = win;
-		}
-	}
-
 	yajl_val monitors = yajl_tree_get(root, (const char *[]){"monitors", 0}, yajl_t_array);
+
 	if (monitors && YAJL_IS_ARRAY(monitors)) {
 		for (size_t i = 0; i < monitors->u.array.len; i++) {
 			yajl_val mentry = monitors->u.array.values[i];
-			if (!mentry)
-				continue;
+			if (!mentry) continue;
 
-			yajl_val numv = yajl_tree_get(mentry,
-				(const char*[]){"num", 0}, yajl_t_number);
-			yajl_val selv = yajl_tree_get(mentry,
-				(const char*[]){"selected_tagset", 0}, yajl_t_number);
-			yajl_val seltv = yajl_tree_get(mentry,
-				(const char*[]){"seltags", 0}, yajl_t_number);
+			yajl_val numv = yajl_tree_get(mentry, (const char*[]){"num", 0}, yajl_t_number);
+			yajl_val selv = yajl_tree_get(mentry, (const char*[]){"selected_tagset", 0}, yajl_t_number);
+			yajl_val seltv = yajl_tree_get(mentry, (const char*[]){"seltags", 0}, yajl_t_number);
 
 			if (!numv || !selv || !seltv)
 				continue;
 
-			int mon_num = (int)YAJL_GET_INTEGER(numv);
-			Monitor *m = find_monitor_by_num(mon_num);
-			if (!m)
-				continue;
+			Monitor *m = find_monitor_by_num((int)YAJL_GET_INTEGER(numv));
+			if (!m) continue;
 
 			unsigned int selmask = (unsigned int)YAJL_GET_INTEGER(selv) & TAGMASK;
 			int seltags = (int)YAJL_GET_INTEGER(seltv);
 
-			if (!selmask)
-				selmask = 1; // Never allow 0-mask
+			if (!selmask) selmask = 1;
+
+			/* Both tagsets must mirror the active one */
 			m->tagset[seltags] = selmask;
 			m->tagset[1 - seltags] = selmask;
 			m->seltags = seltags;
+		}
+	}
+
+	yajl_val clients = yajl_tree_get(root, (const char *[]){"clients", 0}, yajl_t_array);
+	Window focused_win = 0;
+
+	if (clients && YAJL_IS_ARRAY(clients)) {
+		for (size_t i = 0; i < clients->u.array.len; i++) {
+			yajl_val entry = clients->u.array.values[i];
+			if (!entry) continue;
+
+			yajl_val id   = yajl_tree_get(entry, (const char *[]){"client_window_id", 0}, yajl_t_number);
+			yajl_val tags = yajl_tree_get(entry, (const char *[]){"tags", 0}, yajl_t_number);
+
+			if (!id || !tags) continue;
+
+			Window win = (Window)YAJL_GET_INTEGER(id);
+			Client *c = wintoclient(win);
+			if (!c) continue;
+
+			c->tags = ((unsigned int)YAJL_GET_INTEGER(tags)) & TAGMASK;
+		}
+	}
+
+	if (clients && YAJL_IS_ARRAY(clients)) {
+		for (size_t i = 0; i < clients->u.array.len; i++) {
+			yajl_val entry = clients->u.array.values[i];
+			if (!entry) continue;
+
+			yajl_val id  = yajl_tree_get(entry, (const char *[]){"client_window_id", 0}, yajl_t_number);
+			yajl_val mon = yajl_tree_get(entry, (const char *[]){"monitor", 0}, yajl_t_number);
+			yajl_val foc = yajl_tree_get(entry, (const char *[]){"is_focused", 0}, yajl_t_any);
+
+			if (!id) continue;
+
+			Window win = (Window)YAJL_GET_INTEGER(id);
+			Client *c = wintoclient(win);
+			if (!c) continue;
+
+			if (mon && YAJL_IS_NUMBER(mon)) {
+				Monitor *target = find_monitor_by_num((int)YAJL_GET_INTEGER(mon));
+				if (target && c->mon != target)
+					sendmon(c, target);
+			}
+
+			if (foc && YAJL_IS_TRUE(foc))
+				focused_win = win;
 		}
 	}
 
@@ -2147,11 +2117,9 @@ restore_client_state(void)
 	if (focused_win) {
 		Client *fc = wintoclient(focused_win);
 		if (fc) {
-			Monitor *oldsel = selmon;
 			selmon = fc->mon;
 			focus(fc);
 			restack(fc->mon);
-			selmon = oldsel;
 		} else {
 			focus(NULL);
 		}
