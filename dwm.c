@@ -1984,11 +1984,9 @@ save_client_state(void)
 		YSTR("monitors"); YARR(
 			for (Monitor *m = mons; m; m = m->next) {
 				YMAP(
-					YSTR("num");      YINT(m->num);
-					YSTR("tagset0");  YINT(m->tagset[0]);
-					YSTR("tagset1");  YINT(m->tagset[1]);
-					YSTR("seltags");  YINT(m->seltags);
+					YSTR("num"); YINT(m->num);
 					YSTR("selected_tagset"); YINT(m->tagset[m->seltags]);
+					YSTR("seltags"); YINT(m->seltags);
 				)
 			}
 		)
@@ -2064,10 +2062,8 @@ restore_client_state(void)
 			if (!entry || !YAJL_IS_OBJECT(entry))
 				continue;
 
-			yajl_val id  = yajl_tree_get(entry,
-				(const char *[]){"client_window_id", 0}, yajl_t_number);
-			yajl_val mon = yajl_tree_get(entry,
-				(const char *[]){"monitor", 0}, yajl_t_number);
+			yajl_val id  = yajl_tree_get(entry, (const char *[]){"client_window_id", 0}, yajl_t_number);
+			yajl_val mon = yajl_tree_get(entry, (const char *[]){"monitor", 0}, yajl_t_number);
 
 			if (!id)
 				continue;
@@ -2091,12 +2087,9 @@ restore_client_state(void)
 			if (!entry || !YAJL_IS_OBJECT(entry))
 				continue;
 
-			yajl_val id   = yajl_tree_get(entry,
-				(const char *[]){"client_window_id", 0}, yajl_t_number);
-			yajl_val tags = yajl_tree_get(entry,
-				(const char *[]){"tags", 0}, yajl_t_number);
-			yajl_val foc  = yajl_tree_get(entry,
-				(const char *[]){"is_focused", 0}, yajl_t_any);
+			yajl_val id   = yajl_tree_get(entry, (const char *[]){"client_window_id", 0}, yajl_t_number);
+			yajl_val tags = yajl_tree_get(entry, (const char *[]){"tags", 0}, yajl_t_number);
+			yajl_val foc  = yajl_tree_get(entry, (const char *[]){"is_focused", 0}, yajl_t_any);
 
 			if (!id || !tags)
 				continue;
@@ -2116,27 +2109,20 @@ restore_client_state(void)
 	}
 
 	yajl_val monitors = yajl_tree_get(root, (const char *[]){"monitors", 0}, yajl_t_array);
-
 	if (monitors && YAJL_IS_ARRAY(monitors)) {
-		for (size_t i = 0; i < monitors->u.array.len; ++i) {
+		for (size_t i = 0; i < monitors->u.array.len; i++) {
 			yajl_val mentry = monitors->u.array.values[i];
-			if (!mentry || !YAJL_IS_OBJECT(mentry))
+			if (!mentry)
 				continue;
 
-			yajl_val numv     = yajl_tree_get(mentry,
-				(const char *[]){"num", 0}, yajl_t_number);
-			yajl_val tag0v    = yajl_tree_get(mentry,
-				(const char *[]){"tagset0", 0}, yajl_t_number);
-			yajl_val tag1v    = yajl_tree_get(mentry,
-				(const char *[]){"tagset1", 0}, yajl_t_number);
-			yajl_val seltagsv = yajl_tree_get(mentry,
-				(const char *[]){"seltags", 0}, yajl_t_number);
+			yajl_val numv = yajl_tree_get(mentry,
+				(const char*[]){"num", 0}, yajl_t_number);
+			yajl_val selv = yajl_tree_get(mentry,
+				(const char*[]){"selected_tagset", 0}, yajl_t_number);
+			yajl_val seltv = yajl_tree_get(mentry,
+				(const char*[]){"seltags", 0}, yajl_t_number);
 
-			/* Backward compatibility: if only "selected_tagset" exists */
-			yajl_val selv_old = yajl_tree_get(mentry,
-				(const char *[]){"selected_tagset", 0}, yajl_t_number);
-
-			if (!numv)
+			if (!numv || !selv || !seltv)
 				continue;
 
 			int mon_num = (int)YAJL_GET_INTEGER(numv);
@@ -2144,36 +2130,14 @@ restore_client_state(void)
 			if (!m)
 				continue;
 
-			if (tag0v && tag1v && seltagsv) {
-				unsigned int t0 = (unsigned int)YAJL_GET_INTEGER(tag0v) & TAGMASK;
-				unsigned int t1 = (unsigned int)YAJL_GET_INTEGER(tag1v) & TAGMASK;
-				int seltags = (int)YAJL_GET_INTEGER(seltagsv);
+			unsigned int selmask = (unsigned int)YAJL_GET_INTEGER(selv) & TAGMASK;
+			int seltags = (int)YAJL_GET_INTEGER(seltv);
 
-				m->tagset[0] = t0 ? t0 : (1u << 0);
-				m->tagset[1] = t1 ? t1 : (1u << 0);
-				m->seltags   = (seltags != 0) ? 1 : 0;
-			} else if (selv_old) {
-				unsigned int t = (unsigned int)YAJL_GET_INTEGER(selv_old) & TAGMASK;
-				if (!t)
-					t = (1u << 0);
-				m->tagset[0] = t;
-				m->tagset[1] = t;
-				m->seltags   = 0;
-			}
-		}
-	} else {
-		yajl_val selected_tag = yajl_tree_get(root,
-			(const char *[]){"selected_tagset", 0}, yajl_t_number);
-		if (selected_tag) {
-			unsigned int tagset = (unsigned int)YAJL_GET_INTEGER(selected_tag) & TAGMASK;
-			if (!tagset)
-				tagset = (1u << 0);
-
-			for (Monitor *m = mons; m; m = m->next) {
-				m->tagset[0] = tagset;
-				m->tagset[1] = tagset;
-				m->seltags   = 0;
-			}
+			if (!selmask)
+				selmask = 1; // Never allow 0-mask
+			m->tagset[seltags] = selmask;
+			m->tagset[1 - seltags] = selmask;
+			m->seltags = seltags;
 		}
 	}
 
@@ -2183,7 +2147,6 @@ restore_client_state(void)
 	if (focused_win) {
 		Client *fc = wintoclient(focused_win);
 		if (fc) {
-			/* Ensure the correct monitor is selected when focusing */
 			Monitor *oldsel = selmon;
 			selmon = fc->mon;
 			focus(fc);
