@@ -279,6 +279,7 @@ static void runautostart(void);
 static void scan(void);
 static int sendevent(Window w, Atom proto, int m, long d0, long d1, long d2, long d3, long d4);
 static void sendmon(Client *c, Monitor *m);
+static void sendmon_quiet(Client *c, Monitor *m);
 static void setclientstate(Client *c, long state);
 static void setcurrentdesktop(void);
 static void setdesktopnames(void);
@@ -855,6 +856,8 @@ configurenotify(XEvent *e)
 						resizeclient(c, m->mx, m->my, m->mw, m->mh);
 				resizebarwin(m);
 			}
+			if (showsystray)
+				updatesystray(1);
 			focus(NULL);
 			arrange(NULL);
 		}
@@ -1394,6 +1397,9 @@ focusmon(const Arg *arg)
 	unfocus(selmon->sel, 0);
 	selmon = m;
 	focus(NULL);
+
+	if (showsystray && !systraypinning)
+		updatesystray(0);   /* force follow */
 }
 
 void
@@ -1789,6 +1795,9 @@ motionnotify(XEvent *e)
 		unfocus(selmon->sel, 1);
 		selmon = m;
 		focus(NULL);
+
+		if (showsystray && !systraypinning)
+			updatesystray(0);
 	}
 	mon = m;
 }
@@ -1950,6 +1959,44 @@ tagclient(const Arg *arg)
 	restack(c->mon);
 }
 
+static int restored_state = 0;
+static int restoring_clients = 0;
+
+static int
+firsttag(unsigned int tagmask)
+{
+	for (int i = 0; i < LENGTH(tags); i++)
+		if (tagmask & (1U << i))
+			return i + 1; /* pertag is 1-based */
+	return 1;
+}
+static void
+applypertag(Monitor *m)
+{
+    unsigned int cur = m->tagset[m->seltags] & TAGMASK;
+    if (!cur) cur = 1;
+
+    if (cur == TAGMASK) {
+        m->pertag->prevtag = m->pertag->curtag;
+        m->pertag->curtag  = 0;
+    } else {
+        m->pertag->prevtag = m->pertag->curtag;
+        m->pertag->curtag  = firsttag(cur);
+    }
+
+    int t = m->pertag->curtag;
+    m->nmaster = m->pertag->nmasters[t];
+    m->mfact   = m->pertag->mfacts[t];
+    m->sellt   = m->pertag->sellts[t];
+    m->lt[0]   = m->pertag->ltidxs[t][0];
+    m->lt[1]   = m->pertag->ltidxs[t][1];
+    m->showbar = m->pertag->showbars[t];
+    m->enablegaps = m->pertag->enablegaps[t];
+
+    updatebarpos(m);
+    resizebarwin(m);
+}
+
 void
 save_client_state(void)
 {
@@ -1973,29 +2020,51 @@ save_client_state(void)
 				for (Client *c = m->clients; c; c = c->next) {
 					YMAP(
 						YSTR("client_window_id"); YINT(c->win);
-						YSTR("title"); YSTR(c->name ? c->name : "");
-						YSTR("tags"); YINT(c->tags);
+						YSTR("tags");            YINT(c->tags & TAGMASK);
+
+						/* monitor identity + geometry */
 						YSTR("monitor"); YINT(m->num);
 						YSTR("mx"); YINT(m->mx);
 						YSTR("my"); YINT(m->my);
 						YSTR("mw"); YINT(m->mw);
 						YSTR("mh"); YINT(m->mh);
-						YSTR("is_focused"); YBOOL(c == focused);
+
+						/* window geometry */
+						YSTR("x");  YINT(c->x);
+						YSTR("y");  YINT(c->y);
+						YSTR("w");  YINT(c->w);
+						YSTR("h");  YINT(c->h);
+						YSTR("bw"); YINT(c->bw);
+
+						/* restore helpers */
+						YSTR("isfloating");   YBOOL(c->isfloating);
+						YSTR("isfullscreen"); YBOOL(c->isfullscreen);
+						YSTR("oldstate");     YINT(c->oldstate);
+						YSTR("oldbw");        YINT(c->oldbw);
+						YSTR("oldx");         YINT(c->oldx);
+						YSTR("oldy");         YINT(c->oldy);
+						YSTR("oldw");         YINT(c->oldw);
+						YSTR("oldh");         YINT(c->oldh);
+
+						YSTR("is_focused");   YBOOL(c == focused);
 					)
 				}
 			}
-		)
+		);
 
 		YSTR("monitors"); YARR(
 			for (Monitor *m = mons; m; m = m->next) {
 				YMAP(
-					YSTR("num"); YINT(m->num);
-					YSTR("mx"); YINT(m->mx);
-					YSTR("my"); YINT(m->my);
-					YSTR("mw"); YINT(m->mw);
-					YSTR("mh"); YINT(m->mh);
-					YSTR("selected_tagset"); YINT(m->tagset[m->seltags]);
-					YSTR("seltags"); YINT(m->seltags);
+					YSTR("num");     YINT(m->num);
+					YSTR("mx");      YINT(m->mx);
+					YSTR("my");      YINT(m->my);
+					YSTR("mw");      YINT(m->mw);
+					YSTR("mh");      YINT(m->mh);
+
+					/* critical: persist both tagsets + which one is active */
+					YSTR("seltags"); YINT((int)m->seltags);
+					YSTR("tagset0"); YINT((long)(m->tagset[0] & TAGMASK));
+					YSTR("tagset1"); YINT((long)(m->tagset[1] & TAGMASK));
 				)
 			}
 		)
@@ -2004,7 +2073,7 @@ save_client_state(void)
 	const unsigned char *buf;
 	size_t len;
 	yajl_gen_get_buf(gen, &buf, &len);
-	if (buf && len > 0)
+	if (buf && len)
 		fwrite(buf, 1, len, fp);
 
 	fclose(fp);
@@ -2012,7 +2081,6 @@ save_client_state(void)
 	yajl_gen_free(gen);
 }
 
-static int restored_state = 0;
 
 void
 restore_client_state(void)
@@ -2030,115 +2098,200 @@ restore_client_state(void)
 		return;
 	}
 
-	char *json = malloc(fsize + 1);
-	fread(json, 1, fsize, fp);
+	char *json = malloc((size_t)fsize + 1);
+	if (!json) {
+		fclose(fp);
+		return;
+	}
+
+	if (fread(json, 1, (size_t)fsize, fp) != (size_t)fsize) {
+		fclose(fp);
+		free(json);
+		return;
+	}
 	fclose(fp);
 	json[fsize] = '\0';
 
-	yajl_val root = yajl_tree_parse(json, NULL, 0);
-	if (!root || !YAJL_IS_OBJECT(root)) {
-		if (root) yajl_tree_free(root);
-		free(json);
+	yajl_val rootv = yajl_tree_parse(json, NULL, 0);
+	free(json);
+	if (!rootv || !YAJL_IS_OBJECT(rootv)) {
+		if (rootv) yajl_tree_free(rootv);
 		return;
 	}
 
 	restored_state = 1;
 
-	yajl_val monitors = yajl_tree_get(root, (const char *[]){"monitors", 0}, yajl_t_array);
-
+	yajl_val monitors = yajl_tree_get(rootv, (const char *[]){"monitors", 0}, yajl_t_array);
 	if (monitors && YAJL_IS_ARRAY(monitors)) {
 		for (size_t i = 0; i < monitors->u.array.len; i++) {
-			yajl_val mentry = monitors->u.array.values[i];
-			if (!mentry) continue;
-
-			yajl_val numv = yajl_tree_get(mentry, (const char*[]){"num", 0}, yajl_t_number);
-			yajl_val mxv = yajl_tree_get(mentry, (const char*[]){"mx", 0}, yajl_t_number);
-			yajl_val myv = yajl_tree_get(mentry, (const char*[]){"my", 0}, yajl_t_number);
-			yajl_val mwv = yajl_tree_get(mentry, (const char*[]){"mw", 0}, yajl_t_number);
-			yajl_val mhv = yajl_tree_get(mentry, (const char*[]){"mh", 0}, yajl_t_number);
-			yajl_val selv = yajl_tree_get(mentry, (const char*[]){"selected_tagset", 0}, yajl_t_number);
-			yajl_val seltv = yajl_tree_get(mentry, (const char*[]){"seltags", 0}, yajl_t_number);
-
-        	if (!mxv || !myv || !mwv || !mhv || !selv || !seltv)
+			yajl_val me = monitors->u.array.values[i];
+			if (!me || !YAJL_IS_OBJECT(me))
 				continue;
 
-			Monitor *m = find_monitor_by_geometry(
-				(int)YAJL_GET_INTEGER(mxv),
-				(int)YAJL_GET_INTEGER(myv),
-				(int)YAJL_GET_INTEGER(mwv),
-				(int)YAJL_GET_INTEGER(mhv)
-			);
-			if (!m)
-				continue;
+			yajl_val numv  = yajl_tree_get(me, (const char *[]){"num", 0}, yajl_t_number);
+			yajl_val mxv   = yajl_tree_get(me, (const char *[]){"mx", 0}, yajl_t_number);
+			yajl_val myv   = yajl_tree_get(me, (const char *[]){"my", 0}, yajl_t_number);
+			yajl_val mwv   = yajl_tree_get(me, (const char *[]){"mw", 0}, yajl_t_number);
+			yajl_val mhv   = yajl_tree_get(me, (const char *[]){"mh", 0}, yajl_t_number);
+			yajl_val t0v   = yajl_tree_get(me, (const char *[]){"tagset0", 0}, yajl_t_number);
+			yajl_val t1v   = yajl_tree_get(me, (const char *[]){"tagset1", 0}, yajl_t_number);
+			yajl_val seltv = yajl_tree_get(me, (const char *[]){"seltags", 0}, yajl_t_number);
 
-			unsigned int selmask = (unsigned int)YAJL_GET_INTEGER(selv) & TAGMASK;
-			int seltags = (int)YAJL_GET_INTEGER(seltv);
-
-			if (!selmask)
-				selmask = 1;
-
-			m->tagset[seltags] = selmask;
-			m->tagset[1 - seltags] = selmask;
-			m->seltags = seltags;
-		}
-	}
-
-	yajl_val clients = yajl_tree_get(root, (const char *[]){"clients", 0}, yajl_t_array);
-	Window focused_win = 0;
-
-	if (clients && YAJL_IS_ARRAY(clients)) {
-		for (size_t i = 0; i < clients->u.array.len; i++) {
-			yajl_val entry = clients->u.array.values[i];
-			if (!entry) continue;
-
-			yajl_val id   = yajl_tree_get(entry, (const char *[]){"client_window_id", 0}, yajl_t_number);
-			yajl_val tags = yajl_tree_get(entry, (const char *[]){"tags", 0}, yajl_t_number);
-
-			if (!id || !tags) continue;
-
-			Window win = (Window)YAJL_GET_INTEGER(id);
-			Client *c = wintoclient(win);
-			if (!c) continue;
-
-			c->tags = ((unsigned int)YAJL_GET_INTEGER(tags)) & TAGMASK;
-		}
-	}
-
-	if (clients && YAJL_IS_ARRAY(clients)) {
-		for (size_t i = 0; i < clients->u.array.len; i++) {
-			yajl_val entry = clients->u.array.values[i];
-			if (!entry)
-				continue;
-
-			yajl_val id  = yajl_tree_get(entry, (const char *[]){"client_window_id", 0}, yajl_t_number);
-			yajl_val mon = yajl_tree_get(entry, (const char *[]){"monitor", 0}, yajl_t_number);
-			yajl_val mxv = yajl_tree_get(entry, (const char*[]){"mx", 0}, yajl_t_number);
-			yajl_val myv = yajl_tree_get(entry, (const char*[]){"my", 0}, yajl_t_number);
-			yajl_val mwv = yajl_tree_get(entry, (const char*[]){"mw", 0}, yajl_t_number);
-			yajl_val mhv = yajl_tree_get(entry, (const char*[]){"mh", 0}, yajl_t_number);
-			yajl_val foc = yajl_tree_get(entry, (const char *[]){"is_focused", 0}, yajl_t_any);
-
-			if (!id)
-				continue;
-
-			Window win = (Window)YAJL_GET_INTEGER(id);
-			Client *c = wintoclient(win);
-			if (!c)
-				continue;
-
-			if (mon && YAJL_IS_NUMBER(mon)) {
-				Monitor *target = find_monitor_by_geometry(
+			Monitor *m = NULL;
+			if (numv)
+				m = find_monitor_by_num((int)YAJL_GET_INTEGER(numv));
+			if (!m && mxv && myv && mwv && mhv)
+				m = find_monitor_by_geometry(
 					(int)YAJL_GET_INTEGER(mxv),
 					(int)YAJL_GET_INTEGER(myv),
 					(int)YAJL_GET_INTEGER(mwv),
 					(int)YAJL_GET_INTEGER(mhv)
 				);
-				if (target && c->mon != target)
-					sendmon(c, target);
+			if (!m)
+				continue;
+
+			unsigned int t0 = t0v ? ((unsigned int)YAJL_GET_INTEGER(t0v) & TAGMASK) : 1;
+			unsigned int t1 = t1v ? ((unsigned int)YAJL_GET_INTEGER(t1v) & TAGMASK) : t0;
+			int seltags = seltv ? (int)YAJL_GET_INTEGER(seltv) : 0;
+
+			if (t0 == 0) t0 = 1;
+			if (t1 == 0) t1 = t0;
+			if (seltags < 0 || seltags > 1) seltags = 0;
+
+			m->tagset[0] = t0;
+			m->tagset[1] = t1;
+			m->seltags = (unsigned int)seltags;
+
+			/* keep pertag consistent with the selected view */
+			unsigned int cur = m->tagset[m->seltags] & TAGMASK;
+			if (cur == 0) cur = 1;
+
+			if (cur == TAGMASK) {
+				m->pertag->prevtag = m->pertag->curtag;
+				m->pertag->curtag  = 0;
+			} else {
+				m->pertag->prevtag = m->pertag->curtag;
+				m->pertag->curtag  = firsttag(cur);
 			}
+			applypertag(m);
+		}
+	}
+
+	yajl_val clients = yajl_tree_get(rootv, (const char *[]){"clients", 0}, yajl_t_array);
+	Window focused_win = 0;
+
+	if (clients && YAJL_IS_ARRAY(clients)) {
+		restoring_clients = 1;
+		for (size_t i = 0; i < clients->u.array.len; i++) {
+			yajl_val ce = clients->u.array.values[i];
+			if (!ce || !YAJL_IS_OBJECT(ce))
+				continue;
+
+			yajl_val idv  = yajl_tree_get(ce, (const char *[]){"client_window_id", 0}, yajl_t_number);
+			yajl_val monv = yajl_tree_get(ce, (const char *[]){"monitor", 0}, yajl_t_number);
+
+			yajl_val mxv  = yajl_tree_get(ce, (const char *[]){"mx", 0}, yajl_t_number);
+			yajl_val myv  = yajl_tree_get(ce, (const char *[]){"my", 0}, yajl_t_number);
+			yajl_val mwv  = yajl_tree_get(ce, (const char *[]){"mw", 0}, yajl_t_number);
+			yajl_val mhv  = yajl_tree_get(ce, (const char *[]){"mh", 0}, yajl_t_number);
+
+			yajl_val foc  = yajl_tree_get(ce, (const char *[]){"is_focused", 0}, yajl_t_any);
+
+			if (!idv)
+				continue;
+
+			Window win = (Window)YAJL_GET_INTEGER(idv);
+			Client *c = wintoclient(win);
+			if (!c)
+				continue;
+
+			Monitor *target = NULL;
+			if (monv)
+				target = find_monitor_by_num((int)YAJL_GET_INTEGER(monv));
+			if (!target && mxv && myv && mwv && mhv)
+				target = find_monitor_by_geometry(
+					(int)YAJL_GET_INTEGER(mxv),
+					(int)YAJL_GET_INTEGER(myv),
+					(int)YAJL_GET_INTEGER(mwv),
+					(int)YAJL_GET_INTEGER(mhv)
+				);
+
+			if (target && c->mon != target)
+				sendmon_quiet(c, target);
 
 			if (foc && YAJL_IS_TRUE(foc))
 				focused_win = win;
+		}
+		restoring_clients = 0;
+	}
+
+	if (clients && YAJL_IS_ARRAY(clients)) {
+		for (size_t i = 0; i < clients->u.array.len; i++) {
+			yajl_val ce = clients->u.array.values[i];
+			if (!ce || !YAJL_IS_OBJECT(ce))
+				continue;
+
+			yajl_val idv   = yajl_tree_get(ce, (const char *[]){"client_window_id", 0}, yajl_t_number);
+			yajl_val tagsv = yajl_tree_get(ce, (const char *[]){"tags", 0}, yajl_t_number);
+
+			yajl_val xv = yajl_tree_get(ce, (const char *[]){"x", 0}, yajl_t_number);
+			yajl_val yv = yajl_tree_get(ce, (const char *[]){"y", 0}, yajl_t_number);
+			yajl_val wv = yajl_tree_get(ce, (const char *[]){"w", 0}, yajl_t_number);
+			yajl_val hv = yajl_tree_get(ce, (const char *[]){"h", 0}, yajl_t_number);
+
+			yajl_val oldxv     = yajl_tree_get(ce, (const char *[]){"oldx", 0}, yajl_t_number);
+			yajl_val oldyv     = yajl_tree_get(ce, (const char *[]){"oldy", 0}, yajl_t_number);
+			yajl_val oldwv     = yajl_tree_get(ce, (const char *[]){"oldw", 0}, yajl_t_number);
+			yajl_val oldhv     = yajl_tree_get(ce, (const char *[]){"oldh", 0}, yajl_t_number);
+			yajl_val oldbwv    = yajl_tree_get(ce, (const char *[]){"oldbw", 0}, yajl_t_number);
+			yajl_val oldstatev = yajl_tree_get(ce, (const char *[]){"oldstate", 0}, yajl_t_number);
+
+			yajl_val flv = yajl_tree_get(ce, (const char *[]){"isfloating", 0}, yajl_t_any);
+			yajl_val fsv = yajl_tree_get(ce, (const char *[]){"isfullscreen", 0}, yajl_t_any);
+
+			if (!idv || !tagsv)
+				continue;
+
+			Window win = (Window)YAJL_GET_INTEGER(idv);
+			Client *c = wintoclient(win);
+			if (!c)
+				continue;
+
+			if (oldxv) c->oldx = (int)YAJL_GET_INTEGER(oldxv);
+			if (oldyv) c->oldy = (int)YAJL_GET_INTEGER(oldyv);
+			if (oldwv) c->oldw = (int)YAJL_GET_INTEGER(oldwv);
+			if (oldhv) c->oldh = (int)YAJL_GET_INTEGER(oldhv);
+			if (oldbwv) c->oldbw = (int)YAJL_GET_INTEGER(oldbwv);
+			if (oldstatev) c->oldstate = (int)YAJL_GET_INTEGER(oldstatev);
+
+			/* assign tags *after* monitor placement) */
+			unsigned int tagmask = (unsigned int)YAJL_GET_INTEGER(tagsv) & TAGMASK;
+			if (!tagmask)
+				tagmask = 1;
+			c->tags = tagmask;
+
+			if (flv)
+				c->isfloating = YAJL_IS_TRUE(flv) ? 1 : 0;
+
+			/* restore geometry only for floating/non-fullscreen (tiled will be arranged) */
+			if (xv && yv && wv && hv) {
+				int rx = (int)YAJL_GET_INTEGER(xv);
+				int ry = (int)YAJL_GET_INTEGER(yv);
+				int rw = (int)YAJL_GET_INTEGER(wv);
+				int rh = (int)YAJL_GET_INTEGER(hv);
+
+				if (c->isfloating && !(fsv && YAJL_IS_TRUE(fsv)))
+					resizeclient(c, rx, ry, rw, rh);
+			}
+
+			/* fullscreen last so it wins */
+			if (fsv && YAJL_IS_TRUE(fsv)) {
+				if (!c->isfullscreen)
+					setfullscreen(c, 1);
+			} else {
+				if (c->isfullscreen)
+					setfullscreen(c, 0);
+			}
 		}
 	}
 
@@ -2158,8 +2311,7 @@ restore_client_state(void)
 		focus(NULL);
 	}
 
-	yajl_tree_free(root);
-	free(json);
+	yajl_tree_free(rootv);
 }
 
 void
@@ -2515,11 +2667,28 @@ sendmon(Client *c, Monitor *m)
 	detach(c);
 	detachstack(c);
 	c->mon = m;
-	c->tags = m->tagset[m->seltags]; /* assign tags of target monitor */
+	if (!restoring_clients)
+		c->tags = m->tagset[m->seltags];
 	attach(c);
 	attachstack(c);
 	focus(NULL);
 	arrange(NULL);
+}
+
+void
+sendmon_quiet(Client *c, Monitor *m)
+{
+    if (!c || c->mon == m)
+        return;
+
+    /* no focus/unfocus, no arrange, no tag munging */
+    detach(c);
+    detachstack(c);
+
+    c->mon = m;
+
+    attach(c);
+    attachstack(c);
 }
 
 void
@@ -3438,7 +3607,8 @@ updatesystray(int updatebar)
 	XSetWindowAttributes wa;
 	XWindowChanges wc;
 	Client *i;
-	Monitor *m = systraytomon(NULL);
+	Monitor *m = systraytomon(selmon);
+	if (!m) m = selmon;
 	unsigned int x = m->mx + m->mw;
 	unsigned int w = 1, xpad = 0, ypad = 0;
 	xpad = sp;
@@ -3621,7 +3791,7 @@ find_monitor_by_geometry(int x, int y, int w, int h) {
     for (Monitor *m = mons; m; m = m->next)
         if (m->mx == x && m->my == y && m->mw == w && m->mh == h)
             return m;
-    return selmon;
+    return NULL;
 }
 
 Client *
@@ -3734,11 +3904,13 @@ systraytomon(Monitor *m)
 {
 	Monitor *t;
 	int i, n;
+
 	if (!systraypinning) {
-		if (!m)
-			return selmon;
-		return m == selmon ? m : NULL;
+		/* tray follows the monitor we ask for */
+		return m ? m : selmon;
 	}
+
+	/* pinned behavior (your existing code) */
 	for (n = 1, t = mons; t && t->next; n++, t = t->next);
 	for (i = 1, t = mons; t && t->next && i < systraypinning; i++, t = t->next);
 	if (systraypinningfailfirst && n < systraypinning)

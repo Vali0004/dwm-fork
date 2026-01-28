@@ -7,7 +7,7 @@ static const unsigned int gappih         = 3;               /* horiz inner gap b
 static const unsigned int gappiv         = 3;               /* vert inner gap between windows */
 static const unsigned int gappoh         = 5;               /* horiz outer gap between windows and screen edge */
 static const unsigned int gappov         = 5;               /* vert outer gap between windows and screen edge */
-static const unsigned int systraypinning = 0;               /* 0: sloppy systray follows selected monitor, >0: pin systray to monitor X */
+static const unsigned int systraypinning = 1;               /* 0: sloppy systray follows selected monitor, >0: pin systray to monitor X */
 static const unsigned int systrayonleft  = 0;               /* 0: systray in the right corner, >0: systray on left of status text */
 static const unsigned int systrayspacing = 2;               /* systray spacing */
 static unsigned int vertpad              = 3;               /* vertical padding of bar */
@@ -122,11 +122,11 @@ static const Layout layouts[] = {
 
 /* commands */
 static char dmenumon[2] = "0"; /* component of dmenucmd, manipulated in spawn() */
-static const char *dmenucmd[]      = { "dmenu_run_desktop", "-m", dmenumon, "-fn", dmenufont, NULL };
+static const char *dmenucmd[]      = { "rofi", "-modi", "drun,run", "-show", "drun", NULL };
 static const char *termcmd[]       = { "alacritty", NULL };
 static const char *browsercmd[]    = { "google-chrome-stable", NULL };
 static const char *clipcmd[]       = { "clipmenu-paste", NULL };
-static const char *screenshotcmd[] = { "flameshot_fuckk_lol", NULL };
+static const char *screenshotcmd[] = { "flameshot-upload", NULL };
 static const char *flameshotcmd[]  = { "flameshot", "gui", "--accept-on-select", "--clipboard", NULL };
 static const char *lowercmd[]      = { "pactl", "set-sink-volume", "@DEFAULT_SINK@", "-5%", NULL };
 static const char *raisecmd[]      = { "pactl", "set-sink-volume", "@DEFAULT_SINK@", "+5%", NULL };
