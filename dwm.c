@@ -230,12 +230,13 @@ static void destroynotify(XEvent *e);
 static void detach(Client *c);
 static void detachstack(Client *c);
 static Monitor *dirtomon(int dir);
+static int barw(Monitor *m);
 static void remove_outer_separators(char **str);
 static void appiconsappend(char **str, const char *appicon, size_t new_size);
 static void applyappicon(char *tag_icons[], int *icons_per_tag, const Client *c);
 static void drawbar(Monitor *m);
 static void drawbars(void);
-static int drawstatusbar(Monitor *m, int bh, char* text);
+static int drawstatusbar(Monitor *m, int bw, int bh, char* text);
 static void enternotify(XEvent *e);
 static void expose(XEvent *e);
 static void focus(Client *c);
@@ -628,13 +629,14 @@ buttonpress(XEvent *e)
 				continue;
 			x += TEXTW(m->tag_icons[i]);
 		} while (ev->x >= x && ++i < LENGTH(tags));
+		int bw = barw(selmon);
 		if (i < LENGTH(tags)) {
 			click = ClkTagBar;
 			arg.ui = 1 << i;
 		} else if (ev->x < x + TEXTW(selmon->ltsymbol))
 			click = ClkLtSymbol;
-		else if (ev->x > selmon->ww - (int)TEXTW(stext) - statusw - getsystraywidth()) {
-			x = selmon->ww - statusw;
+		else if (ev->x > bw - statusw /* - TEXTW(stext) */) {
+			x = bw - statusw;
 			click = ClkStatusText;
 
 			char *text, *s, ch;
@@ -774,7 +776,7 @@ clientmessage(XEvent *e)
 				return;
 			}
 
-			c->mon = selmon;
+			c->mon = systraytomon(selmon);
 			c->next = systray->icons;
 			systray->icons = c;
 			XGetWindowAttributes(dpy, c->win, &wa);
@@ -1021,7 +1023,16 @@ dirtomon(int dir)
 }
 
 int
-drawstatusbar(Monitor *m, int bh, char *stext)
+barw(Monitor *m)
+{
+    int w = m->ww;
+    if (showsystray && m == systraytomon(m) && !systrayonleft)
+        w -= getsystraywidth();
+    return w;
+}
+
+int
+drawstatusbar(Monitor *m, int bw, int bh, char *stext)
 {
 	int ret, i, j, w, x, len;
 	short is_code = 0;
@@ -1063,9 +1074,8 @@ drawstatusbar(Monitor *m, int bh, char *stext)
 	text = p;
 
 	w += lrpad; /* Add side padding */
-
-	ret = m->ww - w;
-	x = m->ww - w - getsystraywidth();
+	x = bw - w;
+	ret = x;
 
 	/* Draw background */
 	drw_setscheme(drw, scheme[LENGTH(colors)]);
@@ -1213,7 +1223,7 @@ drawbar(Monitor *m)
 	if (usealtbar)
 		return;
 
-	int x, w, tw = 0, stw = 0;
+	int x, w, tw = 0;
 	int boxs = drw->fonts->h / 9;
 	int boxw = drw->fonts->h / 6 + 2;
 	unsigned int i, occ = 0, urg = 0;
@@ -1222,12 +1232,11 @@ drawbar(Monitor *m)
 	if (!m->showbar)
 		return;
 
-	if (showsystray && m == systraytomon(m)) {
-		stw = getsystraywidth();
-	}
-
 	/* draw status first so it can be overdrawn by tags later */
-	tw = statusw = m->ww - drawstatusbar(m, bh, stext);
+	int bw = barw(m);
+	int sx = drawstatusbar(m, bw, bh, stext);
+	statusw = bw - sx;
+	tw = statusw;
 	tw += 2 * sp;
 
 	int icons_per_tag[LENGTH(tags)];
@@ -1292,7 +1301,7 @@ drawbar(Monitor *m)
  	drw_setscheme(drw, scheme[SchemeNorm]);
  	x = drw_text(drw, x, 0, w, bh, lrpad / 2, m->ltsymbol, 0);
 
-	if ((w = m->ww - tw - stw - x - sp) > bh) {
+	if ((w = bw - tw - x - sp) > bh) {
 		if (m->sel) {
 			drw_setscheme(drw, scheme[m == selmon ? SchemeSel : SchemeNorm]);
 			drw_text(drw, x, 0, w - 2 * sp, bh, lrpad / 2, m->sel->name, 0);
@@ -1303,7 +1312,7 @@ drawbar(Monitor *m)
 			drw_rect(drw, x, 0, w - 2 * sp, bh, 1, 1);
 		}
 	}
-	drw_map(drw, m->barwin, 0, 0, m->ww - stw, bh);
+	drw_map(drw, m->barwin, 0, 0, m->ww, bh);
 }
 
 void
@@ -1507,10 +1516,12 @@ getstate(Window w)
 unsigned int
 getsystraywidth()
 {
+	if (!showsystray || !systray)
+		return 0;
+
 	unsigned int w = 0;
 	Client *i;
-	if (showsystray)
-		for (i = systray->icons; i; w += i->w + systrayspacing, i = i->next);
+	for (i = systray->icons; i; w += i->w + systrayspacing, i = i->next);
 	return w ? w + systrayspacing : 0;
 }
 
@@ -1598,7 +1609,7 @@ handlexevent(struct epoll_event *ev)
 				ipc_send_events(mons, &lastselmon, selmon);
 			}
 		}
-	} else if (ev-> events & EPOLLHUP) {
+	} else if (ev->events & EPOLLHUP) {
 		return -1;
 	}
 
@@ -2607,17 +2618,22 @@ runautostart(void)
 	if (sprintf(path, "%s/%s", pathpfx, autostartblocksh) <= 0) {
 		free(path);
 		free(pathpfx);
+		return;
 	}
 
 	int res = 0;
 	if (access(path, X_OK) == 0) {
-		res = system(path);
+		char *cmd = ecalloc(1, strlen(path) + 3); // " &" + NUL
+		sprintf(cmd, "%s &", path);
+		res = system(cmd);
+		free(cmd);
 	}
 
 	/* now the non-blocking script */
 	if (sprintf(path, "%s/%s", pathpfx, autostartsh) <= 0) {
 		free(path);
 		free(pathpfx);
+		return;
 	}
 
 	if (access(path, X_OK) == 0)
@@ -2826,12 +2842,15 @@ setcfact(const Arg *arg) {
 void
 setlayoutsafe(const Arg *arg)
 {
-	const Layout *ltptr = (Layout *)arg->v;
-	if (ltptr == 0)
-			setlayout(arg);
+	if (!arg || !arg->v) {
+		setlayout(arg);
+		return;
+	}
 	for (int i = 0; i < LENGTH(layouts); i++) {
-		if (ltptr == &layouts[i])
+		if (arg->v == &layouts[i]) {
 			setlayout(arg);
+			return;
+		}
 	}
 }
 
@@ -3165,7 +3184,7 @@ togglebar(const Arg *arg)
 	selmon->showbar = selmon->pertag->showbars[selmon->pertag->curtag] = !selmon->showbar;
 	updatebarpos(selmon);
 	resizebarwin(selmon);
-	if (showsystray) {
+	if (showsystray && systray) {
 		XWindowChanges wc;
 		if (!selmon->showbar)
 			wc.y = -bh;
@@ -3976,17 +3995,13 @@ previewallwin(void)
 	unsigned int n = 0, i;
 	XEvent event;
 	int done = 0;
-	int kb_index = 0;
 	int mouse_index = -1;
-	int active_mode = 0;
 
 	for (c = m->clients; c; c = c->next)
 		n++;
 
 	if (n == 0)
 		return;
-
-	kb_index = (n > 1 ? 1 : 0);
 
 	clients = calloc(n, sizeof(Client *));
 	if (!clients)
@@ -4023,107 +4038,135 @@ previewallwin(void)
 	}
 
 	XGrabKeyboard(dpy, root, True, GrabModeAsync, GrabModeAsync, CurrentTime);
-	XGrabPointer(dpy, root, True,
-		ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-		GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
+	if (XGrabPointer(dpy, root, True,
+			ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+			GrabModeAsync, GrabModeAsync,
+			None, cursor[CurNormal]->cursor, CurrentTime) != GrabSuccess) {
+		XUngrabKeyboard(dpy, CurrentTime);
+		goto cleanup;
+	}
 	XAllowEvents(dpy, AsyncPointer, CurrentTime);
 
-	while (!done) {
-		for (i = 0; i < n; i++) {
-			unsigned long color = scheme[SchemeNorm][ColBorder].pixel;
-
-			if (i == kb_index && active_mode == 0) {
-				/* keyboard-driven selection */
-				color = scheme[SchemeSel][ColBorder].pixel;
-			} else if (i == mouse_index && active_mode == 1) {
-				/* mouse click selection (committed) */
-				color = scheme[SchemeSel][ColBorder].pixel;
-			} else if (i == mouse_index && active_mode == 0) {
-				/* just hovering */
-				color = scheme[SchemeHover][ColBorder].pixel;
-			}
-
-			XSetWindowBorder(dpy, clients[i]->pre.win, color);
-		}
+	while (!done && running) {
 		XNextEvent(dpy, &event);
 
 		switch (event.type) {
-		case ButtonPress:
-			if (event.xbutton.button == Button1) {
-				Window clicked = event.xbutton.window;
-				for (i = 0; i < n; i++) {
-					if (clicked == clients[i]->pre.win) {
-						mouse_index = i;
-						active_mode = 1;
-						focus_c = clients[i];
-						done = 1;
-						break;
-					}
+		case Expose: {
+			/* Redraw the preview image if needed */
+			XExposeEvent *ee = &event.xexpose;
+			for (i = 0; i < n; i++) {
+				Client *pc = clients[i];
+				if (pc->pre.win == ee->window && ee->count == 0) {
+					GC gc = XCreateGC(dpy, pc->pre.win, 0, NULL);
+					XPutImage(dpy, pc->pre.win, gc, pc->pre.scaled_image, 0, 0, 0, 0,
+							pc->pre.scaled_image->width, pc->pre.scaled_image->height);
+					XFreeGC(dpy, gc);
+					break;
 				}
 			}
-			break;
+		} break;
+
+		case EnterNotify: {
+			/* Hover highlight */
+			XCrossingEvent *ce = &event.xcrossing;
+			for (i = 0; i < n; i++) {
+				Client *pc = clients[i];
+				if (pc->pre.win == ce->window) {
+					mouse_index = (int)i;
+					break;
+				}
+			}
+
+			for (i = 0; i < n; i++) {
+				Client *pc = clients[i];
+				unsigned long col = (i == (unsigned)mouse_index)
+					? scheme[SchemeSel][ColBorder].pixel
+					: scheme[SchemeNorm][ColBorder].pixel;
+				XSetWindowBorder(dpy, pc->pre.win, col);
+			}
+			XSync(dpy, False);
+		} break;
+
+		case ButtonPress: {
+			/* Click selects */
+			XButtonEvent *be = &event.xbutton;
+			for (i = 0; i < n; i++) {
+				Client *pc = clients[i];
+				if (pc->pre.win == be->window) {
+					focus_c = pc;
+					done = 1;
+					break;
+				}
+			}
+		} break;
 
 		case KeyPress: {
-			KeySym sym = XLookupKeysym(&event.xkey, 0);
-			if (sym == XK_Tab) {
-				kb_index = (kb_index + 1) % n;
-				active_mode = 0;
-			} else if (sym == XK_Escape) {
+			/* Keyboard selects or cancels */
+			KeySym ks = XLookupKeysym(&event.xkey, 0);
+
+			if (ks == XK_Escape || ks == XK_q) {
+				done = 1;
 				focus_c = NULL;
-				done = 1;
+				break;
 			}
-			break;
-		}
 
-		case KeyRelease: {
-			KeySym sym = XLookupKeysym(&event.xkey, 0);
-			if (sym == XK_Alt_L || sym == XK_Alt_R) {
-				if (active_mode == 0)
-					focus_c = clients[kb_index];
-				done = 1;
-			}
-			break;
-		}
-
-		case EnterNotify:
-			if (event.xcrossing.mode == NotifyNormal) {
-				for (i = 0; i < n; i++) {
-					if (event.xcrossing.window == clients[i]->pre.win) {
-						mouse_index = -1;  /* no hover */
-						break;
-					}
+			/* 1..9 selects that index (if exists) */
+			if (ks >= XK_1 && ks <= XK_9) {
+				int idx = (int)(ks - XK_1);
+				if (idx >= 0 && (unsigned)idx < n) {
+					focus_c = clients[idx];
+					done = 1;
 				}
 			}
+
+			/* Optional: vim keys */
+			if (ks == XK_Return && mouse_index >= 0 && (unsigned)mouse_index < n) {
+				focus_c = clients[mouse_index];
+				done = 1;
+			}
+		} break;
+
+		default:
 			break;
 		}
 	}
 
+cleanup:
 	XUngrabPointer(dpy, CurrentTime);
 	XUngrabKeyboard(dpy, CurrentTime);
 
-	if (focus_c) {
-		XUngrabPointer(dpy, CurrentTime);
-		XUngrabKeyboard(dpy, CurrentTime);
-
-		selmon->seltags ^= 1;
-		selmon->tagset[selmon->seltags] = focus_c->tags;
-
-		detach(focus_c);
-		attach(focus_c);
-
-		arrange(selmon);
-		focus(focus_c);
-		restack(selmon);
-		XSetInputFocus(dpy, focus_c->win, RevertToPointerRoot, CurrentTime);
-	}
-
+	/* Unmap/destroy preview windows and free images */
 	for (i = 0; i < n; i++) {
-		c = clients[i];
-		XUnmapWindow(dpy, c->pre.win);
-		XDestroyImage(c->pre.orig_image);
-		XDestroyImage(c->pre.scaled_image);
+		Client *pc = clients[i];
+
+		if (pc->pre.win) {
+			XUnmapWindow(dpy, pc->pre.win);
+			/* If you never reuse preview windows, destroy them: */
+			XDestroyWindow(dpy, pc->pre.win);
+			pc->pre.win = 0;
+		}
+
+		if (pc->pre.scaled_image) {
+			XDestroyImage(pc->pre.scaled_image);
+			pc->pre.scaled_image = NULL;
+		}
+		if (pc->pre.orig_image) {
+			XDestroyImage(pc->pre.orig_image);
+			pc->pre.orig_image = NULL;
+		}
 	}
 	free(clients);
+	XSync(dpy, False);
+
+	/* Apply selection */
+	if (focus_c) {
+		/* Switch view to its tags (optional; you already have winview()) */
+		Arg a = {.ui = focus_c->tags & TAGMASK};
+		view(&a);
+
+		focus(focus_c);
+		restack(focus_c->mon);
+	}
 }
 
 void
