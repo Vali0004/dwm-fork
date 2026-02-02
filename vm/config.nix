@@ -1,4 +1,7 @@
-{ config, lib, pkgs, ... }:
+{ config
+, lib
+, pkgs
+, ... }:
 
 {
   boot = {
@@ -28,20 +31,29 @@
       lss = "ls --color -lha";
     };
     systemPackages = with pkgs; [
+      alacritty-graphics
       alsa-utils
       bridge-utils
       curl
+      clipmenu
+      discord
       fastfetch
       flameshot
+      gdb
+      glib
+      gnused
       google-chrome
-      firefox
-      kodiPackages.inputstream-adaptive
+      iperf
+      jq
+      openssl
+      pciutils
+      rofi
       vulkan-extension-layer
       vulkan-tools
       vulkan-validation-layers
       xdg-launch
       xdg-utils
-      xhost
+      xvfb-run
       zip
     ];
     variables.CM_LAUNCHER = "rofi";
@@ -60,10 +72,7 @@
   };
 
   networking = {
-    firewall = {
-      allowedTCPPorts = [ 22 8080 ];
-      allowedUDPPorts = [ 8080 ];
-    };
+    firewall.allowedTCPPorts = [ 22 ];
     hostName = "nixos-vm";
     useDHCP = true;
   };
@@ -117,26 +126,23 @@
       enable = true;
       settings.PasswordAuthentication = false;
     };
-    displayManager.autoLogin.user = "kodi";
     xserver = {
       enable = true;
-      desktopManager = {
-        kodi = {
-          enable = true;
-          package = (pkgs.kodi.withPackages (kodiPkgs: with kodiPkgs; [
-            jellyfin
-            inputstream-adaptive
-          ]));
-        };
-      };
-      displayManager = {
-        startx = {
-          enable = false;
-          #generateScript = true;
-        };
-        lightdm.greeter.enable = false;
+      # Disable XTerm
+      excludePackages = [ pkgs.xterm ];
+      desktopManager.xterm.enable = false;
+      displayManager.startx = {
+        enable = true;
+        generateScript = true;
       };
       logFile = "/var/log/Xorg.0.log";
+      windowManager.dwm = {
+        enable = true;
+        package = pkgs.dwm.overrideAttrs {
+          buildInputs = (pkgs.dwm.buildInputs or []) ++ [ pkgs.yajl ];
+          src = ./..;
+        };
+      };
       xkb.layout = "us";
     };
   };
@@ -144,11 +150,11 @@
   system = {
     activationScripts.fixXinitrc.text = ''
       # Copy the original script, and set as writable
-      #install -Dm755 /etc/X11/xinit/xinitrc /root/.xinitrc
-      #install -Dm755 /etc/X11/xinit/xinitrc /home/vali/.xinitrc
+      install -Dm755 /etc/X11/xinit/xinitrc /root/.xinitrc
+      install -Dm755 /etc/X11/xinit/xinitrc /home/vali/.xinitrc
       # Copy to both home directories
-      #chown root:root root/.xinitrc
-      #chown vali:users /home/vali/.xinitrc
+      chown vali:users /root/.xinitrc
+      chown vali:users /home/vali/.xinitrc
     '';
     stateVersion = "25.11";
   };
@@ -162,7 +168,6 @@
       "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDJR3qDc8r2kbg6Q+A0dk7E6fC/wdlySBKb8X+8XgRGJg6huXaCTPZbAyvzt1IvxY69IdBymExjUie7YuFOLOKi5wisfw6d1yVjrhaoZWvXTz6eyF0ssAzM1BbqJsHU2dahQnNo7ThUguR365woBaw1UrZHEjlAiX16NxDVEyaXNImDjlQKBiAyDaa/pOCe1GUYwPgXHJMwF+6JbY+pGYAm6AvvsnjhLO0kyzwv1hSOd4qlzSobkDE9FQMbJD7uV+D1cXAv2ERdf/h9/L5dUcOEUscES+wg8ezLOhaBmq8TT9K3gmhMa47zNQU1WUAg39n+2+/Dwix0j7GNsNZdbp6B vali@nixos-amd"
     ];
   in {
-    extraUsers.kodi.isNormalUser = true;
     groups.users = {};
     users = {
       root.openssh.authorizedKeys.keys = ssh_keys;
