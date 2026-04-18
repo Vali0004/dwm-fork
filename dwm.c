@@ -161,6 +161,12 @@ typedef struct {
 	void (*arrange)(Monitor *);
 } Layout;
 
+typedef struct TrayMirror TrayMirror;
+struct TrayMirror {
+	Window win;
+	unsigned int x, y, w, h;
+};
+
 typedef struct Pertag Pertag;
 struct Monitor {
 	char ltsymbol[16];
@@ -191,6 +197,7 @@ struct Monitor {
 	Window barwin;
 	const Layout *lt[2];
 	const Layout *lastlt;
+	TrayMirror traymirror;
 	Pertag *pertag;
 };
 
@@ -227,6 +234,13 @@ static void configurenotify(XEvent *e);
 static void configurerequest(XEvent *e);
 static Monitor *createmon(void);
 static void destroynotify(XEvent *e);
+static Monitor *traymirrorwindowtomon(Window w);
+static Client *trayiconatx(int x);
+static void createtraymirror(Monitor *m);
+static void destroytraymirror(Monitor *m);
+static void placetraymirrors(void);
+static void drawtraymirrors(void);
+static void forwardtrayclick(XButtonPressedEvent *ev);
 static void detach(Client *c);
 static void detachstack(Client *c);
 static Monitor *dirtomon(int dir);
@@ -608,8 +622,13 @@ buttonpress(XEvent *e)
 	unsigned int i, x, click;
 	Arg arg = {0};
 	Client *c;
-	Monitor *m;
+	Monitor *m, *tm;
 	XButtonPressedEvent *ev = &e->xbutton;
+
+	if ((tm = traymirrorwindowtomon(ev->window))) {
+		forwardtrayclick(ev);
+		return;
+	}
 
 	click = ClkRootWin;
 	/* focus monitor if necessary */
@@ -741,6 +760,9 @@ cleanupmon(Monitor *mon)
 		for (m = mons; m && m->next != mon; m = m->next);
 		m->next = mon->next;
 	}
+
+	destroytraymirror(mon);
+
 	if (!usealtbar) {
 		XUnmapWindow(dpy, mon->barwin);
 		XDestroyWindow(dpy, mon->barwin);
@@ -983,6 +1005,196 @@ destroynotify(XEvent *e)
 		updatesystray(1);
 	}
 }
+Monitor *
+traymirrorwindowtomon(Window w)
+{
+	Monitor *m;
+
+	for (m = mons; m; m = m->next)
+		if (m->traymirror.win == w)
+			return m;
+	return NULL;
+}
+
+Client *
+trayiconatx(int x)
+{
+	Client *i;
+
+	if (!systray)
+		return NULL;
+
+	for (i = systray->icons; i; i = i->next) {
+		/* mapped icons only; tags is reused as mapped state in your tray code */
+		if (!i->tags)
+			continue;
+		if (x >= i->x && x < i->x + (int)i->w)
+			return i;
+	}
+	return NULL;
+}
+
+void
+createtraymirror(Monitor *m)
+{
+	XSetWindowAttributes wa = {
+		.override_redirect = True,
+		.background_pixel = scheme[SchemeNorm][ColBg].pixel,
+		.border_pixel = 0,
+		.colormap = cmap,
+		.event_mask = ButtonPressMask|ExposureMask
+	};
+	XClassHint ch = {"dwm-traymirror", "dwm-traymirror"};
+
+	if (m->traymirror.win)
+		return;
+
+	m->traymirror.win = XCreateWindow(
+		dpy, root,
+		m->wx, m->by,
+		1, bh, 0,
+		depth, InputOutput, visual,
+		CWOverrideRedirect|CWBackPixel|CWBorderPixel|CWColormap|CWEventMask,
+		&wa
+	);
+
+	XDefineCursor(dpy, m->traymirror.win, cursor[CurNormal]->cursor);
+	XSetClassHint(dpy, m->traymirror.win, &ch);
+}
+
+void
+destroytraymirror(Monitor *m)
+{
+	if (!m->traymirror.win)
+		return;
+
+	XUnmapWindow(dpy, m->traymirror.win);
+	XDestroyWindow(dpy, m->traymirror.win);
+	m->traymirror.win = 0;
+	m->traymirror.x = m->traymirror.y = 0;
+	m->traymirror.w = m->traymirror.h = 0;
+}
+
+void
+placetraymirrors(void)
+{
+	Monitor *m, *owner;
+	unsigned int trayw;
+	int x, y, h;
+
+	if (!showsystray || !systray) {
+		for (m = mons; m; m = m->next)
+			destroytraymirror(m);
+		return;
+	}
+
+	owner = systraytomon(selmon);
+	trayw = getsystraywidth();
+	h = bh;
+
+	for (m = mons; m; m = m->next) {
+		if (!m->showbar || trayw == 0) {
+			destroytraymirror(m);
+			continue;
+		}
+
+		if (m == owner) {
+			/* real tray lives here, no mirror */
+			destroytraymirror(m);
+			continue;
+		}
+
+		createtraymirror(m);
+
+		if (!systrayonleft)
+			x = m->wx + m->ww - trayw - sp;
+		else
+			x = m->wx + sp;
+
+		y = m->by + vp;
+
+		m->traymirror.x = x;
+		m->traymirror.y = y;
+		m->traymirror.w = trayw;
+		m->traymirror.h = h;
+
+		XMoveResizeWindow(dpy, m->traymirror.win, x, y, trayw, h);
+		XMapRaised(dpy, m->traymirror.win);
+	}
+}
+
+void
+drawtraymirrors(void)
+{
+	Monitor *m, *owner;
+	GC gc;
+	unsigned int trayw;
+
+	if (!showsystray || !systray || !systray->win)
+		return;
+
+	owner = systraytomon(selmon);
+	trayw = getsystraywidth();
+	if (trayw == 0)
+		return;
+
+	gc = XCreateGC(dpy, root, 0, NULL);
+
+	for (m = mons; m; m = m->next) {
+		if (m == owner || !m->showbar || !m->traymirror.win)
+			continue;
+
+		/* clear background first */
+		XSetForeground(dpy, gc, scheme[SchemeNorm][ColBg].pixel);
+		XFillRectangle(dpy, m->traymirror.win, gc, 0, 0, m->traymirror.w, m->traymirror.h);
+
+		/* copy the visible real tray into the mirror */
+		XCopyArea(dpy, systray->win, m->traymirror.win, gc,
+		          0, 0, trayw, bh, 0, 0);
+
+		XMapRaised(dpy, m->traymirror.win);
+	}
+
+	XFreeGC(dpy, gc);
+}
+
+void
+forwardtrayclick(XButtonPressedEvent *ev)
+{
+	Client *i;
+	XEvent fev;
+	int relx;
+
+	if (!systray || !systray->win)
+		return;
+
+	i = trayiconatx(ev->x);
+	if (!i)
+		return;
+
+	relx = ev->x - i->x;
+
+	memset(&fev, 0, sizeof(fev));
+	fev.xbutton.type = ButtonPress;
+	fev.xbutton.display = dpy;
+	fev.xbutton.window = i->win;
+	fev.xbutton.root = root;
+	fev.xbutton.subwindow = None;
+	fev.xbutton.time = ev->time;
+	fev.xbutton.x = relx;
+	fev.xbutton.y = ev->y;
+	fev.xbutton.x_root = ev->x_root;
+	fev.xbutton.y_root = ev->y_root;
+	fev.xbutton.state = ev->state;
+	fev.xbutton.button = ev->button;
+	fev.xbutton.same_screen = True;
+	XSendEvent(dpy, i->win, False, ButtonPressMask, &fev);
+
+	fev.xbutton.type = ButtonRelease;
+	XSendEvent(dpy, i->win, False, ButtonReleaseMask, &fev);
+
+	XFlush(dpy);
+}
 
 void
 detach(Client *c)
@@ -1025,10 +1237,10 @@ dirtomon(int dir)
 int
 barw(Monitor *m)
 {
-    int w = m->ww;
-    if (showsystray && m == systraytomon(m) && !systrayonleft)
-        w -= getsystraywidth();
-    return w;
+	int w = m->ww;
+	if (showsystray && !systrayonleft)
+		w -= getsystraywidth();
+	return w;
 }
 
 int
@@ -1323,8 +1535,10 @@ drawbars(void)
 	for (m = mons; m; m = m->next)
 		drawbar(m);
 
-	if (showsystray && !systraypinning)
+	if (showsystray && !systraypinning) {
 		updatesystray(0);
+		drawtraymirrors();
+	}
 }
 
 void
@@ -1352,7 +1566,15 @@ expose(XEvent *e)
 	Monitor *m;
 	XExposeEvent *ev = &e->xexpose;
 
-	if (ev->count == 0 && (m = wintomon(ev->window))) {
+	if (ev->count != 0)
+		return;
+
+	if ((m = traymirrorwindowtomon(ev->window))) {
+		drawtraymirrors();
+		return;
+	}
+
+	if ((m = wintomon(ev->window))) {
 		drawbar(m);
 		if (showsystray && m == systraytomon(m))
 			updatesystray(0);
@@ -1809,6 +2031,7 @@ motionnotify(XEvent *e)
 
 		if (showsystray && !systraypinning)
 			updatesystray(0);
+		drawtraymirrors();
 	}
 	mon = m;
 }
@@ -3361,24 +3584,28 @@ updatebars(void)
 		.background_pixel = 0,
 		.border_pixel = 0,
 		.colormap = cmap,
-		.event_mask = ButtonPressMask|ExposureMask
+		.event_mask = ButtonPressMask|ButtonReleaseMask|ExposureMask
 	};
 	XClassHint ch = {"dwm", "dwm"};
+
 	for (m = mons; m; m = m->next) {
-		if (m->barwin)
-			continue;
 		w = m->ww;
-		if (showsystray && m == systraytomon(m))
+		if (showsystray && !systrayonleft)
 			w -= getsystraywidth();
-		m->barwin = XCreateWindow(dpy, root, m->wx + sp, m->by + vp, w - 2 * sp, bh, 0, depth,
-				InputOutput, visual,
-				CWOverrideRedirect|CWBackPixel|CWBorderPixel|CWColormap|CWEventMask, &wa);
-		XDefineCursor(dpy, m->barwin, cursor[CurNormal]->cursor);
-		if (showsystray && m == systraytomon(m))
-			XMapRaised(dpy, systray->win);
-		XMapRaised(dpy, m->barwin);
-		XSetClassHint(dpy, m->barwin, &ch);
+
+		if (!m->barwin) {
+			m->barwin = XCreateWindow(dpy, root, m->wx + sp, m->by + vp, w - 2 * sp, bh, 0, depth,
+					InputOutput, visual,
+					CWOverrideRedirect|CWBackPixel|CWBorderPixel|CWColormap|CWEventMask, &wa);
+			XDefineCursor(dpy, m->barwin, cursor[CurNormal]->cursor);
+			XSetClassHint(dpy, m->barwin, &ch);
+			XMapRaised(dpy, m->barwin);
+		} else {
+			XMoveResizeWindow(dpy, m->barwin, m->wx + sp, m->by + vp, w - 2 * sp, bh);
+		}
 	}
+
+	placetraymirrors();
 }
 
 void
@@ -3695,6 +3922,9 @@ updatesystray(int updatebar)
 
 	if (updatebar)
 		drawbar(m);
+
+	placetraymirrors();
+	drawtraymirrors();
 }
 
 void
