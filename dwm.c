@@ -4136,6 +4136,7 @@ xerror(Display *dpy, XErrorEvent *ee)
 	fprintf(stderr,
 		"dwm: fatal X error: req=%d code=%d (%s) resource=%lu minor=%d\n",
 		ee->request_code, ee->error_code, buf, ee->resourceid, ee->minor_code);
+	fflush(stderr);
 
 	return xerrorxlib(dpy, ee);
 }
@@ -4574,6 +4575,10 @@ scaledownimage(XImage *orig_image, unsigned int cw, unsigned int ch)
 int
 main(int argc, char *argv[])
 {
+	freopen("/tmp/dwm.log", "w", stderr);
+	freopen("/tmp/dwm.log", "a", stdout);
+	setbuf(stderr, NULL);
+	setbuf(stdout, NULL);
 	if (argc == 2 && !strcmp("-v", argv[1]))
 		die("dwm-"VERSION);
 	else if (argc != 1)
