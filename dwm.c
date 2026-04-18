@@ -44,6 +44,8 @@
 #endif /* XINERAMA */
 #include <X11/Xft/Xft.h>
 #include <X11/extensions/Xrender.h>
+#include <X11/extensions/Xcomposite.h>
+#include <X11/extensions/Xdamage.h>
 
 #include "drw.h"
 #include "util.h"
@@ -147,6 +149,10 @@ struct Client {
 	Window win;
 	Preview pre;
 	ClientState prevstate;
+	int tray_redirected;
+	Pixmap tray_pixmap;
+	Picture tray_picture;
+	Damage tray_damage;
 };
 
 typedef struct {
@@ -241,6 +247,9 @@ static void destroytraymirror(Monitor *m);
 static void placetraymirrors(void);
 static void drawtraymirrors(void);
 static void forwardtrayclick(XButtonPressedEvent *ev);
+static void inittrayiconmirror(Client *i);
+static void freetrayiconmirror(Client *i);
+static void refreshtrayiconmirror(Client *i);
 static void detach(Client *c);
 static void detachstack(Client *c);
 static Monitor *dirtomon(int dir);
@@ -407,6 +416,10 @@ static Display *dpy;
 static Drw *drw;
 static Monitor *mons, *selmon, *lastselmon;
 static Window root, wmcheckwin;
+
+static int damage_event_base;
+static int damage_error_base;
+static int have_xdamage = 0;
 
 static Systray *systray = NULL;
 static unsigned long systrayorientation = _NET_SYSTEM_TRAY_ORIENTATION_HORZ;
@@ -821,6 +834,7 @@ clientmessage(XEvent *e)
 			sendevent(c->win, netatom[Xembed], StructureNotifyMask, CurrentTime, XEMBED_EMBEDDED_NOTIFY, 0 , systray->win, XEMBED_EMBEDDED_VERSION);
 			XSync(dpy, False);
 			setclientstate(c, NormalState);
+			c->tray_redirected = 0;
 			updatesystray(1);
 		}
 		return;
@@ -1039,10 +1053,10 @@ createtraymirror(Monitor *m)
 {
 	XSetWindowAttributes wa = {
 		.override_redirect = True,
-		.background_pixel = scheme[SchemeNorm][ColBg].pixel,
+		.background_pixel = 0,
 		.border_pixel = 0,
 		.colormap = cmap,
-		.event_mask = ButtonPressMask|ExposureMask
+		.event_mask = ButtonPressMask|ButtonReleaseMask|ExposureMask
 	};
 	XClassHint ch = {"dwm-traymirror", "dwm-traymirror"};
 
@@ -1127,8 +1141,11 @@ void
 drawtraymirrors(void)
 {
 	Monitor *m, *owner;
+	Client *i;
 	GC gc;
 	unsigned int trayw;
+	Picture dst;
+	XRenderPictFormat *dstfmt;
 
 	if (!showsystray || !systray || !systray->win)
 		return;
@@ -1138,25 +1155,40 @@ drawtraymirrors(void)
 	if (trayw == 0)
 		return;
 
-	gc = XCreateGC(dpy, root, 0, NULL);
-
 	for (m = mons; m; m = m->next) {
 		if (m == owner || !m->showbar || !m->traymirror.win)
 			continue;
 
-		XSetForeground(dpy, gc, scheme[SchemeNorm][ColBg].pixel);
-		XFillRectangle(dpy, m->traymirror.win, gc, 0, 0,
-		               m->traymirror.w, m->traymirror.h);
+		XRenderColor clear = { 0, 0, 0, 0 };
 
-		/* TEMP: disable mirror copy */
-		/* XCopyArea(dpy, systray->win, m->traymirror.win, gc,
-		 *           0, 0, trayw, bh, 0, 0);
-		 */
+		dstfmt = XRenderFindVisualFormat(dpy, visual);
+		if (!dstfmt)
+			continue;
 
+		dst = XRenderCreatePicture(dpy, m->traymirror.win, dstfmt, 0, NULL);
+		XRenderFillRectangle(dpy, PictOpSrc, dst, &clear, 0, 0, m->traymirror.w, m->traymirror.h);
+
+		for (i = systray->icons; i; i = i->next) {
+			if (!i->tags)
+				continue;
+			if (!i->tray_picture) {
+				inittrayiconmirror(i);
+				if (!i->tray_picture)
+					continue;
+			}
+
+			XRenderComposite(dpy, PictOpOver,
+			                 i->tray_picture, None, dst,
+			                 0, 0, 0, 0,
+			                 i->x, 0,
+			                 i->w, i->h);
+		}
+
+		XRenderFreePicture(dpy, dst);
 		XMapRaised(dpy, m->traymirror.win);
 	}
 
-	XFreeGC(dpy, gc);
+	XFlush(dpy);
 }
 
 void
@@ -1195,6 +1227,88 @@ forwardtrayclick(XButtonPressedEvent *ev)
 	XSendEvent(dpy, i->win, False, ButtonReleaseMask, &fev);
 
 	XFlush(dpy);
+}
+
+void
+freetrayiconmirror(Client *i)
+{
+	if (!i)
+		return;
+
+	if (i->tray_damage) {
+		XDamageDestroy(dpy, i->tray_damage);
+		i->tray_damage = None;
+	}
+
+	if (i->tray_picture) {
+		XRenderFreePicture(dpy, i->tray_picture);
+		i->tray_picture = None;
+	}
+
+	if (i->tray_pixmap) {
+		XFreePixmap(dpy, i->tray_pixmap);
+		i->tray_pixmap = None;
+	}
+
+	if (i->tray_redirected) {
+		XCompositeUnredirectWindow(dpy, i->win, CompositeRedirectAutomatic);
+		i->tray_redirected = 0;
+	}
+}
+
+void
+inittrayiconmirror(Client *i)
+{
+	XWindowAttributes wa;
+	XRenderPictFormat *fmt;
+
+	if (!i || !i->win)
+		return;
+
+	/* Only refresh pixmap/picture here */
+	if (i->tray_picture) {
+		XRenderFreePicture(dpy, i->tray_picture);
+		i->tray_picture = None;
+	}
+	if (i->tray_pixmap) {
+		XFreePixmap(dpy, i->tray_pixmap);
+		i->tray_pixmap = None;
+	}
+
+	if (!XGetWindowAttributes(dpy, i->win, &wa))
+		return;
+
+	if (wa.map_state != IsViewable)
+		return;
+
+	/* Redirect once, only after the icon is actually viewable */
+	if (!i->tray_redirected) {
+		XCompositeRedirectWindow(dpy, i->win, CompositeRedirectAutomatic);
+		i->tray_redirected = 1;
+		XSync(dpy, False);
+	}
+
+	i->tray_pixmap = XCompositeNameWindowPixmap(dpy, i->win);
+	if (!i->tray_pixmap)
+		return;
+
+	fmt = XRenderFindVisualFormat(dpy, wa.visual);
+	if (!fmt) {
+		XFreePixmap(dpy, i->tray_pixmap);
+		i->tray_pixmap = None;
+		return;
+	}
+
+	i->tray_picture = XRenderCreatePicture(dpy, i->tray_pixmap, fmt, 0, NULL);
+
+	if (have_xdamage && !i->tray_damage)
+		i->tray_damage = XDamageCreate(dpy, i->win, XDamageReportNonEmpty);
+}
+
+void
+refreshtrayiconmirror(Client *i)
+{
+	inittrayiconmirror(i);
 }
 
 void
@@ -1535,11 +1649,6 @@ drawbars(void)
 
 	for (m = mons; m; m = m->next)
 		drawbar(m);
-
-	if (showsystray && !systraypinning) {
-		updatesystray(0);
-		drawtraymirrors();
-	}
 }
 
 void
@@ -1821,18 +1930,34 @@ grabkeys(void)
 }
 
 int
-handlexevent(struct epoll_event *ev)
+handlexevent(struct epoll_event *evp)
 {
-	if (ev->events & EPOLLIN) {
+	if (evp->events & EPOLLIN) {
 		XEvent ev;
+
 		while (running && XPending(dpy)) {
 			XNextEvent(dpy, &ev);
+
+			if (have_xdamage && ev.type == damage_event_base + XDamageNotify) {
+				XDamageNotifyEvent *de = (XDamageNotifyEvent *)&ev;
+				Client *i;
+
+				for (i = systray ? systray->icons : NULL; i; i = i->next) {
+					if (i->tray_damage == de->damage) {
+						XDamageSubtract(dpy, i->tray_damage, None, None);
+						drawtraymirrors();
+						break;
+					}
+				}
+				continue;
+			}
+
 			if (handler[ev.type]) {
-				handler[ev.type](&ev); /* call handler */
+				handler[ev.type](&ev);
 				ipc_send_events(mons, &lastselmon, selmon);
 			}
 		}
-	} else if (ev->events & EPOLLHUP) {
+	} else if (evp->events & EPOLLHUP) {
 		return -1;
 	}
 
@@ -1990,6 +2115,7 @@ maprequest(XEvent *e)
 	Client *i;
 	if (showsystray && (i = wintosystrayicon(ev->window))) {
 		sendevent(i->win, netatom[Xembed], StructureNotifyMask, CurrentTime, XEMBED_WINDOW_ACTIVATE, 0, systray->win, XEMBED_EMBEDDED_VERSION);
+		refreshtrayiconmirror(i);
 		updatesystray(1);
 	}
 
@@ -2149,6 +2275,7 @@ propertynotify(XEvent *e)
 		}
 		else
 			updatesystrayiconstate(c, ev);
+		refreshtrayiconmirror(c);
 		updatesystray(1);
 	}
 
@@ -2578,6 +2705,8 @@ void
 removesystrayicon(Client *i)
 {
 	Client **ii;
+
+	freetrayiconmirror(i);
 
 	if (!showsystray || !i)
 		return;
@@ -3134,6 +3263,21 @@ setup(void)
 	vp = (topbar == 1) ? vertpad : -vertpad;
 	bh = usealtbar ? 0 : drw->fonts->h + 2 * vertpad;
 	updategeom();
+	int composite_event_base, composite_error_base;
+	int composite_major, composite_minor;
+
+	/* check if we support compositing */
+	if (!XCompositeQueryExtension(dpy, &composite_event_base, &composite_error_base))
+		die("dwm: XComposite extension not available\n");
+
+	if (!XCompositeQueryVersion(dpy, &composite_major, &composite_minor))
+		die("dwm: could not query XComposite version\n");
+
+	/* check if we support damage */
+	if (XDamageQueryExtension(dpy, &damage_event_base, &damage_error_base))
+		have_xdamage = 1;
+	else
+		have_xdamage = 0;
 
 	/* init atoms */
 	utf8string = XInternAtom(dpy, "UTF8_STRING", False);
@@ -3809,6 +3953,7 @@ updatesystrayicongeom(Client *i, int w, int h)
 		else
 			i->w = (int) ((float)bh * ((float)w / (float)h));
 		applysizehints(i, &(i->x), &(i->y), &(i->w), &(i->h), False);
+		refreshtrayiconmirror(i);
 		/* force icons into the systray dimensions if they don't want to */
 		if (i->h > bh) {
 			if (i->w == i->h)
@@ -3920,6 +4065,9 @@ updatesystray(int updatebar)
 	XMapWindow(dpy, systray->win);
 	XMapSubwindows(dpy, systray->win);
 	XSync(dpy, False);
+
+	for (i = systray->icons; i; i = i->next)
+		refreshtrayiconmirror(i);
 
 	if (updatebar)
 		drawbar(m);
@@ -4253,7 +4401,7 @@ previewallwin(void)
 		clients[i] = c;
 	}
 
-	/* Start from selected client if possible */
+	/* Start from current selected client */
 	for (i = 0; i < n; i++) {
 		if (clients[i] == selmon->sel) {
 			selected_index = (int)i;
@@ -4275,7 +4423,8 @@ previewallwin(void)
 			XMoveResizeWindow(dpy, c->pre.win, c->pre.x, c->pre.y,
 				c->pre.scaled_image->width, c->pre.scaled_image->height);
 
-		XSelectInput(dpy, c->pre.win, ExposureMask | ButtonPressMask | EnterWindowMask);
+		XSelectInput(dpy, c->pre.win,
+			ExposureMask | ButtonPressMask | EnterWindowMask);
 
 		XSetWindowBorder(dpy, c->pre.win,
 			((int)i == selected_index)
@@ -4290,19 +4439,9 @@ previewallwin(void)
 		XFreeGC(dpy, gc);
 	}
 
-	/* owner_events = False so grab reliably receives keys */
+	/* Grab keyboard only; let mouse events go to preview windows naturally */
 	if (XGrabKeyboard(dpy, root, False, GrabModeAsync, GrabModeAsync, CurrentTime) != GrabSuccess)
 		goto cleanup;
-
-	if (XGrabPointer(dpy, root, False,
-			ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-			GrabModeAsync, GrabModeAsync,
-			None, cursor[CurNormal]->cursor, CurrentTime) != GrabSuccess) {
-		XUngrabKeyboard(dpy, CurrentTime);
-		goto cleanup;
-	}
-
-	XAllowEvents(dpy, AsyncPointer, CurrentTime);
 
 	while (!done && running) {
 		XNextEvent(dpy, &event);
@@ -4314,8 +4453,10 @@ previewallwin(void)
 				Client *pc = clients[i];
 				if (pc->pre.win == ee->window && ee->count == 0) {
 					GC gc = XCreateGC(dpy, pc->pre.win, 0, NULL);
-					XPutImage(dpy, pc->pre.win, gc, pc->pre.scaled_image, 0, 0, 0, 0,
-						pc->pre.scaled_image->width, pc->pre.scaled_image->height);
+					XPutImage(dpy, pc->pre.win, gc, pc->pre.scaled_image,
+						0, 0, 0, 0,
+						pc->pre.scaled_image->width,
+						pc->pre.scaled_image->height);
 					XFreeGC(dpy, gc);
 					break;
 				}
@@ -4381,7 +4522,7 @@ previewallwin(void)
 				break;
 			}
 
-			/* 1..9 selects that index (if exists) */
+			/* 1..9 selects that index */
 			if (ks >= XK_1 && ks <= XK_9) {
 				int idx = (int)(ks - XK_1);
 				if (idx >= 0 && (unsigned)idx < n) {
@@ -4402,7 +4543,7 @@ previewallwin(void)
 		case KeyRelease: {
 			KeySym ks = XLookupKeysym(&event.xkey, 0);
 
-			/* Commit selection when Alt is released */
+			/* Commit when Alt is released */
 			if (ks == XK_Alt_L || ks == XK_Alt_R) {
 				if (selected_index >= 0 && (unsigned)selected_index < n)
 					focus_c = clients[selected_index];
@@ -4416,7 +4557,6 @@ previewallwin(void)
 	}
 
 cleanup:
-	XUngrabPointer(dpy, CurrentTime);
 	XUngrabKeyboard(dpy, CurrentTime);
 
 	for (i = 0; i < n; i++) {
@@ -4443,7 +4583,6 @@ cleanup:
 	if (focus_c) {
 		Arg a = {.ui = focus_c->tags & TAGMASK};
 		view(&a);
-
 		focus(focus_c);
 		restack(focus_c->mon);
 	}
