@@ -3566,7 +3566,7 @@ updatestatus(void)
 {
 	if (!gettextprop(root, XA_WM_NAME, stext, sizeof(stext)))
 		strcpy(stext, "dwm-"VERSION);
-	drawbar(selmon);
+	drawbars();
 }
 
 void
@@ -3996,6 +3996,7 @@ previewallwin(void)
 	XEvent event;
 	int done = 0;
 	int mouse_index = -1;
+	int selected_index = -1;
 
 	for (c = m->clients; c; c = c->next)
 		n++;
@@ -4014,6 +4015,16 @@ previewallwin(void)
 		clients[i] = c;
 	}
 
+	/* Start from selected client if possible */
+	for (i = 0; i < n; i++) {
+		if (clients[i] == selmon->sel) {
+			selected_index = (int)i;
+			break;
+		}
+	}
+	if (selected_index < 0)
+		selected_index = 0;
+
 	setpreviewwindowsizepositions(n, m, 60, 15);
 
 	for (i = 0; i < n; i++) {
@@ -4028,7 +4039,11 @@ previewallwin(void)
 
 		XSelectInput(dpy, c->pre.win, ExposureMask | ButtonPressMask | EnterWindowMask);
 
-		XSetWindowBorder(dpy, c->pre.win, scheme[SchemeNorm][ColBorder].pixel);
+		XSetWindowBorder(dpy, c->pre.win,
+			((int)i == selected_index)
+				? scheme[SchemeSel][ColBorder].pixel
+				: scheme[SchemeNorm][ColBorder].pixel);
+
 		XMapWindow(dpy, c->pre.win);
 
 		GC gc = XCreateGC(dpy, c->pre.win, 0, NULL);
@@ -4037,14 +4052,18 @@ previewallwin(void)
 		XFreeGC(dpy, gc);
 	}
 
-	XGrabKeyboard(dpy, root, True, GrabModeAsync, GrabModeAsync, CurrentTime);
-	if (XGrabPointer(dpy, root, True,
+	/* owner_events = False so grab reliably receives keys */
+	if (XGrabKeyboard(dpy, root, False, GrabModeAsync, GrabModeAsync, CurrentTime) != GrabSuccess)
+		goto cleanup;
+
+	if (XGrabPointer(dpy, root, False,
 			ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
 			GrabModeAsync, GrabModeAsync,
 			None, cursor[CurNormal]->cursor, CurrentTime) != GrabSuccess) {
 		XUngrabKeyboard(dpy, CurrentTime);
 		goto cleanup;
 	}
+
 	XAllowEvents(dpy, AsyncPointer, CurrentTime);
 
 	while (!done && running) {
@@ -4052,14 +4071,13 @@ previewallwin(void)
 
 		switch (event.type) {
 		case Expose: {
-			/* Redraw the preview image if needed */
 			XExposeEvent *ee = &event.xexpose;
 			for (i = 0; i < n; i++) {
 				Client *pc = clients[i];
 				if (pc->pre.win == ee->window && ee->count == 0) {
 					GC gc = XCreateGC(dpy, pc->pre.win, 0, NULL);
 					XPutImage(dpy, pc->pre.win, gc, pc->pre.scaled_image, 0, 0, 0, 0,
-							pc->pre.scaled_image->width, pc->pre.scaled_image->height);
+						pc->pre.scaled_image->width, pc->pre.scaled_image->height);
 					XFreeGC(dpy, gc);
 					break;
 				}
@@ -4067,28 +4085,25 @@ previewallwin(void)
 		} break;
 
 		case EnterNotify: {
-			/* Hover highlight */
 			XCrossingEvent *ce = &event.xcrossing;
 			for (i = 0; i < n; i++) {
-				Client *pc = clients[i];
-				if (pc->pre.win == ce->window) {
+				if (clients[i]->pre.win == ce->window) {
 					mouse_index = (int)i;
+					selected_index = (int)i;
 					break;
 				}
 			}
 
 			for (i = 0; i < n; i++) {
-				Client *pc = clients[i];
-				unsigned long col = (i == (unsigned)mouse_index)
+				unsigned long col = ((int)i == selected_index)
 					? scheme[SchemeSel][ColBorder].pixel
 					: scheme[SchemeNorm][ColBorder].pixel;
-				XSetWindowBorder(dpy, pc->pre.win, col);
+				XSetWindowBorder(dpy, clients[i]->pre.win, col);
 			}
 			XSync(dpy, False);
 		} break;
 
 		case ButtonPress: {
-			/* Click selects */
 			XButtonEvent *be = &event.xbutton;
 			for (i = 0; i < n; i++) {
 				Client *pc = clients[i];
@@ -4101,7 +4116,6 @@ previewallwin(void)
 		} break;
 
 		case KeyPress: {
-			/* Keyboard selects or cancels */
 			KeySym ks = XLookupKeysym(&event.xkey, 0);
 
 			if (ks == XK_Escape || ks == XK_q) {
@@ -4110,18 +4124,50 @@ previewallwin(void)
 				break;
 			}
 
+			/* Cycle with Tab while Alt is held */
+			if (ks == XK_Tab) {
+				if (event.xkey.state & ShiftMask)
+					selected_index = (selected_index - 1 + (int)n) % (int)n;
+				else
+					selected_index = (selected_index + 1) % (int)n;
+
+				mouse_index = selected_index;
+
+				for (i = 0; i < n; i++) {
+					unsigned long col = ((int)i == selected_index)
+						? scheme[SchemeSel][ColBorder].pixel
+						: scheme[SchemeNorm][ColBorder].pixel;
+					XSetWindowBorder(dpy, clients[i]->pre.win, col);
+				}
+				XSync(dpy, False);
+				break;
+			}
+
 			/* 1..9 selects that index (if exists) */
 			if (ks >= XK_1 && ks <= XK_9) {
 				int idx = (int)(ks - XK_1);
 				if (idx >= 0 && (unsigned)idx < n) {
+					selected_index = idx;
 					focus_c = clients[idx];
 					done = 1;
 				}
+				break;
 			}
 
-			/* Optional: vim keys */
-			if (ks == XK_Return && mouse_index >= 0 && (unsigned)mouse_index < n) {
-				focus_c = clients[mouse_index];
+			if (ks == XK_Return && selected_index >= 0 && (unsigned)selected_index < n) {
+				focus_c = clients[selected_index];
+				done = 1;
+				break;
+			}
+		} break;
+
+		case KeyRelease: {
+			KeySym ks = XLookupKeysym(&event.xkey, 0);
+
+			/* Commit selection when Alt is released */
+			if (ks == XK_Alt_L || ks == XK_Alt_R) {
+				if (selected_index >= 0 && (unsigned)selected_index < n)
+					focus_c = clients[selected_index];
 				done = 1;
 			}
 		} break;
@@ -4135,13 +4181,11 @@ cleanup:
 	XUngrabPointer(dpy, CurrentTime);
 	XUngrabKeyboard(dpy, CurrentTime);
 
-	/* Unmap/destroy preview windows and free images */
 	for (i = 0; i < n; i++) {
 		Client *pc = clients[i];
 
 		if (pc->pre.win) {
 			XUnmapWindow(dpy, pc->pre.win);
-			/* If you never reuse preview windows, destroy them: */
 			XDestroyWindow(dpy, pc->pre.win);
 			pc->pre.win = 0;
 		}
@@ -4158,9 +4202,7 @@ cleanup:
 	free(clients);
 	XSync(dpy, False);
 
-	/* Apply selection */
 	if (focus_c) {
-		/* Switch view to its tags (optional; you already have winview()) */
 		Arg a = {.ui = focus_c->tags & TAGMASK};
 		view(&a);
 

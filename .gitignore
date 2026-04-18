@@ -1,5 +1,6 @@
 vm/result
 vm/*.img
+result
 *.o
 *.socket
 dwm
