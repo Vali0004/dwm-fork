@@ -1144,13 +1144,14 @@ drawtraymirrors(void)
 		if (m == owner || !m->showbar || !m->traymirror.win)
 			continue;
 
-		/* clear background first */
 		XSetForeground(dpy, gc, scheme[SchemeNorm][ColBg].pixel);
-		XFillRectangle(dpy, m->traymirror.win, gc, 0, 0, m->traymirror.w, m->traymirror.h);
+		XFillRectangle(dpy, m->traymirror.win, gc, 0, 0,
+		               m->traymirror.w, m->traymirror.h);
 
-		/* copy the visible real tray into the mirror */
-		XCopyArea(dpy, systray->win, m->traymirror.win, gc,
-		          0, 0, trayw, bh, 0, 0);
+		/* TEMP: disable mirror copy */
+		/* XCopyArea(dpy, systray->win, m->traymirror.win, gc,
+		 *           0, 0, trayw, bh, 0, 0);
+		 */
 
 		XMapRaised(dpy, m->traymirror.win);
 	}
@@ -4118,6 +4119,8 @@ wmclasscontains(Window win, const char *class, const char *name)
 int
 xerror(Display *dpy, XErrorEvent *ee)
 {
+	char buf[1024];
+
 	if (ee->error_code == BadWindow
 	|| (ee->request_code == X_SetInputFocus && ee->error_code == BadMatch)
 	|| (ee->request_code == X_PolyText8 && ee->error_code == BadDrawable)
@@ -4128,9 +4131,13 @@ xerror(Display *dpy, XErrorEvent *ee)
 	|| (ee->request_code == X_GrabKey && ee->error_code == BadAccess)
 	|| (ee->request_code == X_CopyArea && ee->error_code == BadDrawable))
 		return 0;
-	fprintf(stderr, "dwm: fatal error: request code=%d, error code=%d\n",
-		ee->request_code, ee->error_code);
-	return xerrorxlib(dpy, ee); /* may call exit */
+
+	XGetErrorText(dpy, ee->error_code, buf, sizeof(buf));
+	fprintf(stderr,
+		"dwm: fatal X error: req=%d code=%d (%s) resource=%lu minor=%d\n",
+		ee->request_code, ee->error_code, buf, ee->resourceid, ee->minor_code);
+
+	return xerrorxlib(dpy, ee);
 }
 
 int
