@@ -1727,21 +1727,24 @@ focusin(XEvent *e)
 void
 focusmon(const Arg *arg)
 {
-	Monitor *m;
+	Monitor *m, *oldsel, *oldowner, *newowner;
 
 	if (!mons->next)
 		return;
 	if ((m = dirtomon(arg->i)) == selmon)
 		return;
+
+	oldsel = selmon;
+	oldowner = systraytomon(oldsel);
+
 	unfocus(selmon->sel, 0);
 	selmon = m;
 	focus(NULL);
 
-	if (showsystray && !systraypinning) {
-		Monitor *owner = systraytomon(selmon);
-		if (owner != m)
-			updatesystray(0);
-	}
+	newowner = systraytomon(selmon);
+
+	if (showsystray && !systraypinning && oldowner != newowner)
+		updatesystray(0);
 }
 
 void
