@@ -1686,8 +1686,6 @@ expose(XEvent *e)
 
 	if ((m = wintomon(ev->window))) {
 		drawbar(m);
-		if (showsystray && m == systraytomon(m))
-			updatesystray(0);
 	}
 }
 
@@ -1739,8 +1737,11 @@ focusmon(const Arg *arg)
 	selmon = m;
 	focus(NULL);
 
-	if (showsystray && !systraypinning)
-		updatesystray(0);   /* force follow */
+	if (showsystray && !systraypinning) {
+		Monitor *owner = systraytomon(selmon);
+		if (owner != m)
+			updatesystray(0);
+	}
 }
 
 void
