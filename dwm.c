@@ -1097,8 +1097,10 @@ placetraymirrors(void)
 	int x, y, h;
 
 	if (!showsystray || !systray) {
-		for (m = mons; m; m = m->next)
-			destroytraymirror(m);
+		for (m = mons; m; m = m->next) {
+			if (m->traymirror.win)
+				XUnmapWindow(dpy, m->traymirror.win);
+		}
 		return;
 	}
 
@@ -1107,18 +1109,16 @@ placetraymirrors(void)
 	h = bh;
 
 	for (m = mons; m; m = m->next) {
-		if (!m->showbar || trayw == 0) {
-			destroytraymirror(m);
+		/* keep window, just hide it if unused */
+		if (!m->traymirror.win)
+			createtraymirror(m);
+
+		if (!m->showbar || trayw == 0 || m == owner) {
+			XUnmapWindow(dpy, m->traymirror.win);
+			m->traymirror.x = m->traymirror.y = 0;
+			m->traymirror.w = m->traymirror.h = 0;
 			continue;
 		}
-
-		if (m == owner) {
-			/* real tray lives here, no mirror */
-			destroytraymirror(m);
-			continue;
-		}
-
-		createtraymirror(m);
 
 		if (!systrayonleft)
 			x = m->wx + m->ww - trayw - sp;
@@ -1185,7 +1185,6 @@ drawtraymirrors(void)
 		}
 
 		XRenderFreePicture(dpy, dst);
-		XMapRaised(dpy, m->traymirror.win);
 	}
 
 	XFlush(dpy);
