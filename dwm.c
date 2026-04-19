@@ -1142,10 +1142,10 @@ drawtraymirrors(void)
 {
 	Monitor *m, *owner;
 	Client *i;
-	GC gc;
 	unsigned int trayw;
 	Picture dst;
 	XRenderPictFormat *dstfmt;
+	XWindowAttributes wa;
 
 	if (!showsystray || !systray || !systray->win)
 		return;
@@ -1159,23 +1159,27 @@ drawtraymirrors(void)
 		if (m == owner || !m->showbar || !m->traymirror.win)
 			continue;
 
-		XRenderColor clear = { 0, 0, 0, 0 };
+		if (!XGetWindowAttributes(dpy, m->traymirror.win, &wa))
+			continue;
+		if (wa.map_state != IsViewable)
+			continue;
 
-		dstfmt = XRenderFindVisualFormat(dpy, visual);
+		dstfmt = XRenderFindVisualFormat(dpy, wa.visual);
 		if (!dstfmt)
 			continue;
 
 		dst = XRenderCreatePicture(dpy, m->traymirror.win, dstfmt, 0, NULL);
-		XRenderFillRectangle(dpy, PictOpSrc, dst, &clear, 0, 0, m->traymirror.w, m->traymirror.h);
+
+		XRenderColor clear = { 0, 0, 0, 0 };
+		XRenderFillRectangle(dpy, PictOpSrc, dst, &clear, 0, 0, wa.width, wa.height);
 
 		for (i = systray->icons; i; i = i->next) {
 			if (!i->tags)
 				continue;
-			if (!i->tray_picture) {
-				inittrayiconmirror(i);
-				if (!i->tray_picture)
-					continue;
-			}
+
+			refreshtrayiconmirror(i);
+			if (!i->tray_picture)
+				continue;
 
 			XRenderComposite(dpy, PictOpOver,
 			                 i->tray_picture, None, dst,
@@ -1264,7 +1268,6 @@ inittrayiconmirror(Client *i)
 	if (!i || !i->win)
 		return;
 
-	/* Only refresh pixmap/picture here */
 	if (i->tray_picture) {
 		XRenderFreePicture(dpy, i->tray_picture);
 		i->tray_picture = None;
@@ -1276,16 +1279,19 @@ inittrayiconmirror(Client *i)
 
 	if (!XGetWindowAttributes(dpy, i->win, &wa))
 		return;
-
 	if (wa.map_state != IsViewable)
 		return;
 
-	/* Redirect once, only after the icon is actually viewable */
 	if (!i->tray_redirected) {
 		XCompositeRedirectWindow(dpy, i->win, CompositeRedirectAutomatic);
 		i->tray_redirected = 1;
 		XSync(dpy, False);
 	}
+
+	if (!XGetWindowAttributes(dpy, i->win, &wa))
+		return;
+	if (wa.map_state != IsViewable)
+		return;
 
 	i->tray_pixmap = XCompositeNameWindowPixmap(dpy, i->win);
 	if (!i->tray_pixmap)
@@ -1799,24 +1805,34 @@ getatomprop(Client *c, Atom prop)
 pid_t
 getstatusbarpid()
 {
-	char buf[32], *str = buf, *c;
+	char buf[32], *str = buf, *c, *out;
 	FILE *fp;
+	int err;
 
 	if (statuspid > 0) {
 		snprintf(buf, sizeof(buf), "/proc/%u/cmdline", statuspid);
 		if ((fp = fopen(buf, "r"))) {
-			fgets(buf, sizeof(buf), fp);
+			out = fgets(buf, sizeof(buf), fp);
+			if (!out) {
+				fclose(fp);
+				return -1;
+			}
 			while ((c = strchr(str, '/')))
 				str = c + 1;
-			fclose(fp);
+			err = fclose(fp);
+			if (err != 0)
+				return -1;
 			if (!strcmp(str, STATUSBAR))
 				return statuspid;
 		}
 	}
 	if (!(fp = popen("pidof -s "STATUSBAR, "r")))
 		return -1;
-	fgets(buf, sizeof(buf), fp);
-	pclose(fp);
+	out = fgets(buf, sizeof(buf), fp);
+	if (!out) {
+		pclose(fp);
+		return -1;
+	}
 	return strtoul(buf, NULL, 10);
 }
 
@@ -4384,7 +4400,6 @@ previewallwin(void)
 	unsigned int n = 0, i;
 	XEvent event;
 	int done = 0;
-	int mouse_index = -1;
 	int selected_index = -1;
 
 	for (c = m->clients; c; c = c->next)
@@ -4470,7 +4485,6 @@ previewallwin(void)
 			XCrossingEvent *ce = &event.xcrossing;
 			for (i = 0; i < n; i++) {
 				if (clients[i]->pre.win == ce->window) {
-					mouse_index = (int)i;
 					selected_index = (int)i;
 					break;
 				}
@@ -4512,8 +4526,6 @@ previewallwin(void)
 					selected_index = (selected_index - 1 + (int)n) % (int)n;
 				else
 					selected_index = (selected_index + 1) % (int)n;
-
-				mouse_index = selected_index;
 
 				for (i = 0; i < n; i++) {
 					unsigned long col = ((int)i == selected_index)
