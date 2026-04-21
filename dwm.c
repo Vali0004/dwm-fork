@@ -85,13 +85,13 @@
 enum { CurNormal, CurResize, CurMove, CurLast }; /* cursor */
 enum { SchemeNorm, SchemeSel, SchemeTag, SchemeUrg, SchemeHover }; /* color schemes */
 enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
-       NetSystemTray, NetSystemTrayOP, NetSystemTrayOrientation, NetSystemTrayOrientationHorz, NetSystemTrayVisual,
-       NetWMFullscreen, NetActiveWindow, NetWMWindowType, NetWMWindowTypeDock,
-       NetWMWindowTypeDialog, NetClientList, NetDesktopNames, NetDesktopViewport, NetNumberOfDesktops, NetCurrentDesktop, NetLast }; /* EWMH atoms */
+	   NetSystemTray, NetSystemTrayOP, NetSystemTrayOrientation, NetSystemTrayOrientationHorz, NetSystemTrayVisual,
+	   NetWMFullscreen, NetActiveWindow, NetWMWindowType, NetWMWindowTypeDock,
+	   NetWMWindowTypeDialog, NetClientList, NetDesktopNames, NetDesktopViewport, NetNumberOfDesktops, NetCurrentDesktop, NetLast }; /* EWMH atoms */
 enum { Manager, Xembed, XembedInfo, XLast }; /* Xembed atoms */
 enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; /* default atoms */
 enum { ClkTagBar, ClkLtSymbol, ClkStatusText, ClkWinTitle,
-       ClkClientWin, ClkRootWin, ClkLast }; /* clicks */
+	   ClkClientWin, ClkRootWin, ClkLast }; /* clicks */
 
 typedef struct TagState TagState;
 struct TagState {
@@ -241,12 +241,11 @@ static void configurerequest(XEvent *e);
 static Monitor *createmon(void);
 static void destroynotify(XEvent *e);
 static Monitor *traymirrorwindowtomon(Window w);
-static Client *trayiconatx(int x);
+static Client *trayiconatxy(int x, int y);
 static void createtraymirror(Monitor *m);
 static void destroytraymirror(Monitor *m);
 static void placetraymirrors(void);
 static void drawtraymirrors(void);
-static void forwardtrayclick(XButtonPressedEvent *ev);
 static void inittrayiconmirror(Client *i);
 static void freetrayiconmirror(Client *i);
 static void refreshtrayiconmirror(Client *i);
@@ -510,7 +509,7 @@ applyrules(Client *c)
 		&& (!r->instance || strstr(instance, r->instance)))
 		{
 			/* r->appicon is static, so lifetime is sufficient */
-			c->appicon = (char*)r->appicon; 
+			c->appicon = (char*)r->appicon;
 			c->isfloating = r->isfloating;
 			c->tags |= r->tags;
 			for (m = mons; m && m->num != r->monitor; m = m->next);
@@ -634,29 +633,58 @@ buttonpress(XEvent *e)
 {
 	unsigned int i, x, click;
 	Arg arg = {0};
-	Client *c;
+	Client *c, *icon;
 	Monitor *m, *tm;
 	XButtonPressedEvent *ev = &e->xbutton;
 
+	click = ClkRootWin;
+
+	/* Handle clicks on tray mirror windows first */
 	if ((tm = traymirrorwindowtomon(ev->window))) {
-		forwardtrayclick(ev);
+		if (tm != selmon) {
+			unfocus(selmon->sel, 1);
+			selmon = tm;
+			focus(NULL);
+		}
+
+		icon = trayiconatxy(ev->x, ev->y);
+		if (icon) {
+			XEvent ce;
+			memset(&ce, 0, sizeof(ce));
+
+			ce.xbutton.type = ev->type;
+			ce.xbutton.display = dpy;
+			ce.xbutton.window = icon->win;
+			ce.xbutton.root = root;
+			ce.xbutton.subwindow = None;
+			ce.xbutton.time = ev->time;
+			ce.xbutton.x = ev->x - icon->x;
+			ce.xbutton.y = ev->y;
+			ce.xbutton.x_root = ev->x_root;
+			ce.xbutton.y_root = ev->y_root;
+			ce.xbutton.state = ev->state;
+			ce.xbutton.button = ev->button;
+			ce.xbutton.same_screen = True;
+
+			XSendEvent(dpy, icon->win, False, ButtonPressMask, &ce);
+			XFlush(dpy);
+		}
 		return;
 	}
 
-	click = ClkRootWin;
 	/* focus monitor if necessary */
 	if ((m = wintomon(ev->window)) && m != selmon) {
 		unfocus(selmon->sel, 1);
 		selmon = m;
 		focus(NULL);
 	}
+
 	if (ev->window == selmon->barwin) {
 		i = x = 0;
 		unsigned int occ = 0;
-		for(c = m->clients; c; c=c->next)
+		for (c = m->clients; c; c = c->next)
 			occ |= c->tags == TAGMASK ? 0 : c->tags;
 		do {
-			/* Do not reserve space for vacant tags */
 			if (!(occ & 1 << i || m->tagset[m->seltags] & 1 << i))
 				continue;
 			x += TEXTW(m->tag_icons[i]);
@@ -667,7 +695,7 @@ buttonpress(XEvent *e)
 			arg.ui = 1 << i;
 		} else if (ev->x < x + TEXTW(selmon->ltsymbol))
 			click = ClkLtSymbol;
-		else if (ev->x > bw - statusw /* - TEXTW(stext) */) {
+		else if (ev->x > bw - statusw) {
 			x = bw - statusw;
 			click = ClkStatusText;
 
@@ -702,10 +730,13 @@ buttonpress(XEvent *e)
 		XAllowEvents(dpy, ReplayPointer, CurrentTime);
 		click = ClkClientWin;
 	}
+
 	for (i = 0; i < LENGTH(buttons); i++)
-		if (click == buttons[i].click && buttons[i].func && buttons[i].button == ev->button
-		&& CLEANMASK(buttons[i].mask) == CLEANMASK(ev->state))
-			buttons[i].func(click == ClkTagBar && buttons[i].arg.i == 0 ? &arg : &buttons[i].arg);
+		if (click == buttons[i].click && buttons[i].func &&
+		    buttons[i].button == ev->button &&
+		    CLEANMASK(buttons[i].mask) == CLEANMASK(ev->state))
+			buttons[i].func(click == ClkTagBar && buttons[i].arg.i == 0
+			                ? &arg : &buttons[i].arg);
 }
 
 void
@@ -831,7 +862,7 @@ clientmessage(XEvent *e)
 			/* use parents background color */
 			swa.background_pixel  = scheme[SchemeNorm][ColBg].pixel;
 			XChangeWindowAttributes(dpy, c->win, CWBackPixel, &swa);
-			sendevent(c->win, netatom[Xembed], StructureNotifyMask, CurrentTime, XEMBED_EMBEDDED_NOTIFY, 0 , systray->win, XEMBED_EMBEDDED_VERSION);
+			sendevent(c->win, xatom[Xembed], StructureNotifyMask, CurrentTime, XEMBED_EMBEDDED_NOTIFY, 0 , systray->win, XEMBED_EMBEDDED_VERSION);
 			XSync(dpy, False);
 			setclientstate(c, NormalState);
 			c->tray_redirected = 0;
@@ -1031,7 +1062,7 @@ traymirrorwindowtomon(Window w)
 }
 
 Client *
-trayiconatx(int x)
+trayiconatxy(int x, int y)
 {
 	Client *i;
 
@@ -1039,10 +1070,10 @@ trayiconatx(int x)
 		return NULL;
 
 	for (i = systray->icons; i; i = i->next) {
-		/* mapped icons only; tags is reused as mapped state in your tray code */
 		if (!i->tags)
 			continue;
-		if (x >= i->x && x < i->x + (int)i->w)
+		if (x >= i->x && x < i->x + i->w &&
+		    y >= 0 && y < i->h)
 			return i;
 	}
 	return NULL;
@@ -1056,7 +1087,7 @@ createtraymirror(Monitor *m)
 		.background_pixel = 0,
 		.border_pixel = 0,
 		.colormap = cmap,
-		.event_mask = ButtonPressMask|ButtonReleaseMask|ExposureMask
+		.event_mask = ExposureMask
 	};
 	XClassHint ch = {"dwm-traymirror", "dwm-traymirror"};
 
@@ -1109,7 +1140,6 @@ placetraymirrors(void)
 	h = bh;
 
 	for (m = mons; m; m = m->next) {
-		/* keep window, just hide it if unused */
 		if (!m->traymirror.win)
 			createtraymirror(m);
 
@@ -1133,14 +1163,14 @@ placetraymirrors(void)
 		m->traymirror.h = h;
 
 		XMoveResizeWindow(dpy, m->traymirror.win, x, y, trayw, h);
-		XMapRaised(dpy, m->traymirror.win);
+		XMapWindow(dpy, m->traymirror.win);
 	}
 }
 
 void
 drawtraymirrors(void)
 {
-	Monitor *m, *owner;
+	Monitor *m;
 	Client *i;
 	unsigned int trayw;
 	Picture dst;
@@ -1150,13 +1180,12 @@ drawtraymirrors(void)
 	if (!showsystray || !systray || !systray->win)
 		return;
 
-	owner = systraytomon(selmon);
 	trayw = getsystraywidth();
 	if (trayw == 0)
 		return;
 
 	for (m = mons; m; m = m->next) {
-		if (m == owner || !m->showbar || !m->traymirror.win)
+		if (!m->showbar || !m->traymirror.win)
 			continue;
 
 		if (!XGetWindowAttributes(dpy, m->traymirror.win, &wa))
@@ -1195,51 +1224,16 @@ drawtraymirrors(void)
 }
 
 void
-forwardtrayclick(XButtonPressedEvent *ev)
-{
-	Client *i;
-	XEvent fev;
-	int relx;
-
-	if (!systray || !systray->win)
-		return;
-
-	i = trayiconatx(ev->x);
-	if (!i)
-		return;
-
-	relx = ev->x - i->x;
-
-	memset(&fev, 0, sizeof(fev));
-	fev.xbutton.type = ButtonPress;
-	fev.xbutton.display = dpy;
-	fev.xbutton.window = i->win;
-	fev.xbutton.root = root;
-	fev.xbutton.subwindow = None;
-	fev.xbutton.time = ev->time;
-	fev.xbutton.x = relx;
-	fev.xbutton.y = ev->y;
-	fev.xbutton.x_root = ev->x_root;
-	fev.xbutton.y_root = ev->y_root;
-	fev.xbutton.state = ev->state;
-	fev.xbutton.button = ev->button;
-	fev.xbutton.same_screen = True;
-	XSendEvent(dpy, i->win, False, ButtonPressMask, &fev);
-
-	fev.xbutton.type = ButtonRelease;
-	XSendEvent(dpy, i->win, False, ButtonReleaseMask, &fev);
-
-	XFlush(dpy);
-}
-
-void
 freetrayiconmirror(Client *i)
 {
 	if (!i)
 		return;
 
 	if (i->tray_damage) {
+		XSetErrorHandler(xerrordummy);
 		XDamageDestroy(dpy, i->tray_damage);
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
 		i->tray_damage = None;
 	}
 
@@ -1254,9 +1248,14 @@ freetrayiconmirror(Client *i)
 	}
 
 	if (i->tray_redirected) {
+		XSetErrorHandler(xerrordummy);
 		XCompositeUnredirectWindow(dpy, i->win, CompositeRedirectAutomatic);
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
 		i->tray_redirected = 0;
 	}
+
+	XSync(dpy, False);
 }
 
 void
@@ -1283,9 +1282,11 @@ inittrayiconmirror(Client *i)
 		return;
 
 	if (!i->tray_redirected) {
+		XSetErrorHandler(xerrordummy);
 		XCompositeRedirectWindow(dpy, i->win, CompositeRedirectAutomatic);
-		i->tray_redirected = 1;
 		XSync(dpy, False);
+		XSetErrorHandler(xerror);
+		i->tray_redirected = 1;
 	}
 
 	if (!XGetWindowAttributes(dpy, i->win, &wa))
@@ -1293,7 +1294,11 @@ inittrayiconmirror(Client *i)
 	if (wa.map_state != IsViewable)
 		return;
 
+	XSetErrorHandler(xerrordummy);
 	i->tray_pixmap = XCompositeNameWindowPixmap(dpy, i->win);
+	XSync(dpy, False);
+	XSetErrorHandler(xerror);
+
 	if (!i->tray_pixmap)
 		return;
 
@@ -1306,8 +1311,12 @@ inittrayiconmirror(Client *i)
 
 	i->tray_picture = XRenderCreatePicture(dpy, i->tray_pixmap, fmt, 0, NULL);
 
-	if (have_xdamage && !i->tray_damage)
+	if (have_xdamage && !i->tray_damage) {
+		XSetErrorHandler(xerrordummy);
 		i->tray_damage = XDamageCreate(dpy, i->win, XDamageReportNonEmpty);
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
+	}
 }
 
 void
@@ -1748,7 +1757,7 @@ focusmon(const Arg *arg)
 
 	newowner = systraytomon(selmon);
 
-	if (showsystray && !systraypinning && oldowner != newowner)
+	if (showsystray && oldowner != newowner)
 		updatesystray(0);
 }
 
@@ -1962,11 +1971,18 @@ handlexevent(struct epoll_event *evp)
 				Client *i;
 
 				for (i = systray ? systray->icons : NULL; i; i = i->next) {
-					if (i->tray_damage == de->damage) {
-						XDamageSubtract(dpy, i->tray_damage, None, None);
-						drawtraymirrors();
-						break;
-					}
+					if (!i->tray_damage)
+						continue;
+					if (i->tray_damage != de->damage)
+						continue;
+
+					XSetErrorHandler(xerrordummy);
+					XDamageSubtract(dpy, i->tray_damage, None, None);
+					XSync(dpy, False);
+					XSetErrorHandler(xerror);
+
+					drawtraymirrors();
+					break;
 				}
 				continue;
 			}
@@ -2175,7 +2191,7 @@ motionnotify(XEvent *e)
 		selmon = m;
 		focus(NULL);
 
-		if (showsystray && !systraypinning)
+		if (showsystray)
 			updatesystray(0);
 		drawtraymirrors();
 	}
@@ -2351,31 +2367,32 @@ firsttag(unsigned int tagmask)
 			return i + 1; /* pertag is 1-based */
 	return 1;
 }
+
 static void
 applypertag(Monitor *m)
 {
-    unsigned int cur = m->tagset[m->seltags] & TAGMASK;
-    if (!cur) cur = 1;
+	unsigned int cur = m->tagset[m->seltags] & TAGMASK;
+	if (!cur) cur = 1;
 
-    if (cur == TAGMASK) {
-        m->pertag->prevtag = m->pertag->curtag;
-        m->pertag->curtag  = 0;
-    } else {
-        m->pertag->prevtag = m->pertag->curtag;
-        m->pertag->curtag  = firsttag(cur);
-    }
+	if (cur == TAGMASK) {
+		m->pertag->prevtag = m->pertag->curtag;
+		m->pertag->curtag  = 0;
+	} else {
+		m->pertag->prevtag = m->pertag->curtag;
+		m->pertag->curtag  = firsttag(cur);
+	}
 
-    int t = m->pertag->curtag;
-    m->nmaster = m->pertag->nmasters[t];
-    m->mfact   = m->pertag->mfacts[t];
-    m->sellt   = m->pertag->sellts[t];
-    m->lt[0]   = m->pertag->ltidxs[t][0];
-    m->lt[1]   = m->pertag->ltidxs[t][1];
-    m->showbar = m->pertag->showbars[t];
-    m->enablegaps = m->pertag->enablegaps[t];
+	int t = m->pertag->curtag;
+	m->nmaster = m->pertag->nmasters[t];
+	m->mfact   = m->pertag->mfacts[t];
+	m->sellt   = m->pertag->sellts[t];
+	m->lt[0]   = m->pertag->ltidxs[t][0];
+	m->lt[1]   = m->pertag->ltidxs[t][1];
+	m->showbar = m->pertag->showbars[t];
+	m->enablegaps = m->pertag->enablegaps[t];
 
-    updatebarpos(m);
-    resizebarwin(m);
+	updatebarpos(m);
+	resizebarwin(m);
 }
 
 void
@@ -3066,17 +3083,17 @@ sendmon(Client *c, Monitor *m)
 void
 sendmon_quiet(Client *c, Monitor *m)
 {
-    if (!c || c->mon == m)
-        return;
+	if (!c || c->mon == m)
+		return;
 
-    /* no focus/unfocus, no arrange, no tag munging */
-    detach(c);
-    detachstack(c);
+	/* no focus/unfocus, no arrange, no tag munging */
+	detach(c);
+	detachstack(c);
 
-    c->mon = m;
+	c->mon = m;
 
-    attach(c);
-    attachstack(c);
+	attach(c);
+	attachstack(c);
 }
 
 void
@@ -3781,7 +3798,7 @@ updatebarpos(Monitor *m)
 		m->wh = m->wh - vp - bh;
 		m->by = m->topbar ? m->wy : m->wy + m->wh + vp;
 		m->wy = m->topbar ? m->wy + bh + vp : m->wy;
-	} else 
+	} else
 		m->by = -bh - vp;
 }
 
@@ -4205,10 +4222,10 @@ find_monitor_by_num(int num) {
 
 Monitor *
 find_monitor_by_geometry(int x, int y, int w, int h) {
-    for (Monitor *m = mons; m; m = m->next)
-        if (m->mx == x && m->my == y && m->mw == w && m->mh == h)
-            return m;
-    return NULL;
+	for (Monitor *m = mons; m; m = m->next)
+		if (m->mx == x && m->my == y && m->mw == w && m->mh == h)
+			return m;
+	return NULL;
 }
 
 Client *
@@ -4326,20 +4343,8 @@ xerrorstart(Display *dpy, XErrorEvent *ee)
 Monitor *
 systraytomon(Monitor *m)
 {
-	Monitor *t;
-	int i, n;
-
-	if (!systraypinning) {
-		/* tray follows the monitor we ask for */
-		return m ? m : selmon;
-	}
-
-	/* pinned behavior (your existing code) */
-	for (n = 1, t = mons; t && t->next; n++, t = t->next);
-	for (i = 1, t = mons; t && t->next && i < systraypinning; i++, t = t->next);
-	if (systraypinningfailfirst && n < systraypinning)
-		return mons;
-	return t;
+	/* tray follows the monitor we ask for */
+	return m ? m : selmon;
 }
 
 void
@@ -4729,29 +4734,43 @@ scaledownimage(XImage *orig_image, unsigned int cw, unsigned int ch)
 int
 main(int argc, char *argv[])
 {
-	freopen("/tmp/dwm.log", "w", stderr);
-	freopen("/tmp/dwm.log", "a", stdout);
-	setbuf(stderr, NULL);
-	setbuf(stdout, NULL);
+	FILE *log = NULL;
+	log = freopen("/tmp/dwm.log", "w", stderr);
+	if (log) {
+		setbuf(stderr, NULL);
+	}
+	log = freopen("/tmp/dwm.log", "a", stdout);
+	if (log) {
+		setbuf(stdout, NULL);
+	}
+
 	if (argc == 2 && !strcmp("-v", argv[1]))
 		die("dwm-"VERSION);
 	else if (argc != 1)
 		die("usage: dwm [-v]");
+
 	if (!setlocale(LC_CTYPE, "") || !XSupportsLocale())
 		fputs("warning: no locale support\n", stderr);
+
 	if (!(dpy = XOpenDisplay(NULL)))
 		die("dwm: cannot open display");
+
 	checkotherwm();
+
 	setup();
+
 #ifdef __OpenBSD__
 	if (pledge("stdio rpath proc exec", NULL) == -1)
 		die("pledge");
 #endif /* __OpenBSD__ */
+
 	scan();
 	restore_client_state();
 	if (!restored_state)
 		runautostart();
+
 	run();
+
 	if (restart) {
 		execvp(argv[0], argv);
 	}

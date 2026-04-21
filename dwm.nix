@@ -1,14 +1,13 @@
-{
-  lib,
-  stdenv,
-  fetchzip,
-  libX11,
-  libXinerama,
-  libXft,
-  writeText,
-  config,
-  yajl,
-}:
+{ lib
+, stdenv
+, fetchzip
+, libx11
+, libxdamage
+, libxcomposite
+, libxft
+, libxinerama
+, writeText
+, yajl }:
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "dwm";
@@ -17,9 +16,11 @@ stdenv.mkDerivation (finalAttrs: {
   src = ./.;
 
   buildInputs = [
-    libX11
-    libXinerama
-    libXft
+    libx11
+    libxcomposite
+    libxdamage
+    libxft
+    libxinerama
     yajl
   ];
 
