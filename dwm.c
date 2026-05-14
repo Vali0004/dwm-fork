@@ -248,7 +248,9 @@ static void placetraymirrors(void);
 static void drawtraymirrors(void);
 static void inittrayiconmirror(Client *i);
 static void freetrayiconmirror(Client *i);
+static int trayiconvalid(Client *i);
 static void refreshtrayiconmirror(Client *i);
+static void refreshsystray(void);
 static void detach(Client *c);
 static void detachstack(Client *c);
 static Monitor *dirtomon(int dir);
@@ -421,6 +423,12 @@ static int damage_error_base;
 static int have_xdamage = 0;
 
 static Systray *systray = NULL;
+static int tray_rendering = 0;
+static int tray_xerror = 0;
+static int tray_xerror_code = 0;
+static int tray_xerror_req = 0;
+static int tray_xerror_minor = 0;
+static XID tray_xerror_resource = 0;
 static unsigned long systrayorientation = _NET_SYSTEM_TRAY_ORIENTATION_HORZ;
 
 static int useargb = 0;
@@ -648,7 +656,7 @@ buttonpress(XEvent *e)
 		}
 
 		icon = trayiconatxy(ev->x, ev->y);
-		if (icon) {
+		if (icon && trayiconvalid(icon)) {
 			XEvent ce;
 			memset(&ce, 0, sizeof(ce));
 
@@ -666,8 +674,10 @@ buttonpress(XEvent *e)
 			ce.xbutton.button = ev->button;
 			ce.xbutton.same_screen = True;
 
+			XSetErrorHandler(xerrordummy);
 			XSendEvent(dpy, icon->win, False, ButtonPressMask, &ce);
-			XFlush(dpy);
+			XSync(dpy, False);
+			XSetErrorHandler(xerror);
 		}
 		return;
 	}
@@ -689,13 +699,14 @@ buttonpress(XEvent *e)
 				continue;
 			x += TEXTW(m->tag_icons[i]);
 		} while (ev->x >= x && ++i < LENGTH(tags));
+
 		int bw = barw(selmon);
 		if (i < LENGTH(tags)) {
 			click = ClkTagBar;
 			arg.ui = 1 << i;
-		} else if (ev->x < x + TEXTW(selmon->ltsymbol))
+		} else if (ev->x < x + TEXTW(selmon->ltsymbol)) {
 			click = ClkLtSymbol;
-		else if (ev->x > bw - statusw) {
+		} else if (ev->x > bw - statusw) {
 			x = bw - statusw;
 			click = ClkStatusText;
 
@@ -722,8 +733,9 @@ buttonpress(XEvent *e)
 					s--;
 				}
 			}
-		} else
+		} else {
 			click = ClkWinTitle;
+		}
 	} else if ((c = wintoclient(ev->window))) {
 		focus(c);
 		restack(selmon);
@@ -767,12 +779,13 @@ cleanup(void)
 	while (mons)
 		cleanupmon(mons);
 
-	if (showsystray) {
+	if (showsystray && systray) {
 		while (systray->icons)
 			removesystrayicon(systray->icons);
 		XUnmapWindow(dpy, systray->win);
 		XDestroyWindow(dpy, systray->win);
 		free(systray);
+		systray = NULL;
 	}
 
 	for (i = 0; i < CurLast; i++)
@@ -832,40 +845,75 @@ clientmessage(XEvent *e)
 	XClientMessageEvent *cme = &e->xclient;
 	Client *c = wintoclient(cme->window);
 
-	if (showsystray && cme->window == systray->win && cme->message_type == netatom[NetSystemTrayOP]) {
-		/* add systray icons */
+	if (showsystray && systray && cme->window == systray->win && cme->message_type == netatom[NetSystemTrayOP]) {
 		if (cme->data.l[1] == SYSTEM_TRAY_REQUEST_DOCK) {
 			if (!(c = (Client *)calloc(1, sizeof(Client))))
 				die("fatal: could not malloc() %u bytes\n", sizeof(Client));
-			if (!(c->win = cme->data.l[2])) {
+
+			c->win = cme->data.l[2];
+			if (!c->win) {
 				free(c);
 				return;
 			}
 
+			/*
+			 * Do not publish this Client into systray->icons until the
+			 * tray window is proven alive and the X-side setup survived.
+			 * Steam/Discord can create/destroy tray windows during login.
+			 */
+			XSetErrorHandler(xerrordummy);
+			if (!XGetWindowAttributes(dpy, c->win, &wa)) {
+				XSync(dpy, False);
+				XSetErrorHandler(xerror);
+				free(c);
+				return;
+			}
+			XSync(dpy, False);
+			XSetErrorHandler(xerror);
+
 			c->mon = systraytomon(selmon);
-			c->next = systray->icons;
-			systray->icons = c;
-			XGetWindowAttributes(dpy, c->win, &wa);
-			c->x = c->oldx = c->y = c->oldy = 0;
-			c->w = c->oldw = wa.width;
-			c->h = c->oldh = wa.height;
+			c->x = c->oldx = 0;
+			c->y = c->oldy = 0;
+			c->w = c->oldw = MAX(1, wa.width);
+			c->h = c->oldh = MAX(1, wa.height);
 			c->oldbw = wa.border_width;
 			c->bw = 0;
 			c->isfloating = True;
 			/* reuse tags field as mapped status */
 			c->tags = 1;
-			updatesizehints(c);
-			updatesystrayicongeom(c, wa.width, wa.height);
-			XAddToSaveSet(dpy, c->win);
-			XSelectInput(dpy, c->win, StructureNotifyMask | PropertyChangeMask | ResizeRedirectMask);
-			XReparentWindow(dpy, c->win, systray->win, 0, 0);
-			/* use parents background color */
-			swa.background_pixel  = scheme[SchemeNorm][ColBg].pixel;
-			XChangeWindowAttributes(dpy, c->win, CWBackPixel, &swa);
-			sendevent(c->win, xatom[Xembed], StructureNotifyMask, CurrentTime, XEMBED_EMBEDDED_NOTIFY, 0 , systray->win, XEMBED_EMBEDDED_VERSION);
-			XSync(dpy, False);
-			setclientstate(c, NormalState);
+
 			c->tray_redirected = 0;
+			c->tray_pixmap = None;
+			c->tray_picture = None;
+			c->tray_damage = None;
+
+			updatesizehints(c);
+			updatesystrayicongeom(c, c->w, c->h);
+
+			XSetErrorHandler(xerrordummy);
+			XAddToSaveSet(dpy, c->win);
+			XSelectInput(dpy, c->win,
+			             StructureNotifyMask | PropertyChangeMask | ResizeRedirectMask);
+			XReparentWindow(dpy, c->win, systray->win, 0, 0);
+
+			swa.background_pixel = scheme[SchemeNorm][ColBg].pixel;
+			XChangeWindowAttributes(dpy, c->win, CWBackPixel, &swa);
+
+			XSync(dpy, False);
+			XSetErrorHandler(xerror);
+
+			/*
+			 * Publish only after reparent/select/background setup.
+			 * This avoids poisoned systray list entries on BadWindow.
+			 */
+			c->next = systray->icons;
+			systray->icons = c;
+
+			sendevent(c->win, xatom[Xembed], StructureNotifyMask,
+			          CurrentTime, XEMBED_EMBEDDED_NOTIFY, 0,
+			          systray->win, XEMBED_EMBEDDED_VERSION);
+
+			setclientstate(c, NormalState);
 			updatesystray(1);
 		}
 		return;
@@ -873,11 +921,12 @@ clientmessage(XEvent *e)
 
 	if (!c)
 		return;
+
 	if (cme->message_type == netatom[NetWMState]) {
 		if (cme->data.l[1] == netatom[NetWMFullscreen]
 		|| cme->data.l[2] == netatom[NetWMFullscreen])
-			setfullscreen(c, (cme->data.l[0] == 1 /* _NET_WM_STATE_ADD	*/
-				|| (cme->data.l[0] == 2 /* _NET_WM_STATE_TOGGLE */ && !c->isfullscreen)));
+			setfullscreen(c, (cme->data.l[0] == 1
+				|| (cme->data.l[0] == 2 && !c->isfullscreen)));
 	} else if (cme->message_type == netatom[NetActiveWindow]) {
 		if (c != selmon->sel && !c->isurgent)
 			seturgent(c, 1);
@@ -1041,15 +1090,15 @@ destroynotify(XEvent *e)
 	Monitor *m;
 	XDestroyWindowEvent *ev = &e->xdestroywindow;
 
-	if ((c = wintoclient(ev->window)))
+	if ((c = wintoclient(ev->window))) {
 		unmanage(c, 1);
-	else if ((m = wintomon(ev->window)) && m->barwin == ev->window)
+	} else if ((m = wintomon(ev->window)) && m->barwin == ev->window) {
 		unmanagealtbar(ev->window);
-	else if (showsystray && (c = wintosystrayicon(ev->window))) {
+	} else if (showsystray && systray && (c = wintosystrayicon(ev->window))) {
 		removesystrayicon(c);
-		updatesystray(1);
 	}
 }
+
 Monitor *
 traymirrorwindowtomon(Window w)
 {
@@ -1144,7 +1193,11 @@ placetraymirrors(void)
 			createtraymirror(m);
 
 		if (!m->showbar || trayw == 0 || m == owner) {
+			XSetErrorHandler(xerrordummy);
 			XUnmapWindow(dpy, m->traymirror.win);
+			XSync(dpy, False);
+			XSetErrorHandler(xerror);
+
 			m->traymirror.x = m->traymirror.y = 0;
 			m->traymirror.w = m->traymirror.h = 0;
 			continue;
@@ -1162,16 +1215,20 @@ placetraymirrors(void)
 		m->traymirror.w = trayw;
 		m->traymirror.h = h;
 
+		XSetErrorHandler(xerrordummy);
 		XMoveResizeWindow(dpy, m->traymirror.win, x, y, trayw, h);
-		XMapWindow(dpy, m->traymirror.win);
+		XMapRaised(dpy, m->traymirror.win);
+		XRaiseWindow(dpy, m->traymirror.win);
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
 	}
 }
 
 void
 drawtraymirrors(void)
 {
-	Monitor *m;
-	Client *i;
+	Monitor *m, *owner;
+	Client *i, *next;
 	unsigned int trayw;
 	Picture dst;
 	XRenderPictFormat *dstfmt;
@@ -1180,16 +1237,27 @@ drawtraymirrors(void)
 	if (!showsystray || !systray || !systray->win)
 		return;
 
+	owner = systraytomon(selmon);
 	trayw = getsystraywidth();
 	if (trayw == 0)
 		return;
 
 	for (m = mons; m; m = m->next) {
+		if (m == owner)
+			continue;
+
 		if (!m->showbar || !m->traymirror.win)
 			continue;
 
-		if (!XGetWindowAttributes(dpy, m->traymirror.win, &wa))
+		XSetErrorHandler(xerrordummy);
+		if (!XGetWindowAttributes(dpy, m->traymirror.win, &wa)) {
+			XSync(dpy, False);
+			XSetErrorHandler(xerror);
 			continue;
+		}
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
+
 		if (wa.map_state != IsViewable)
 			continue;
 
@@ -1197,30 +1265,117 @@ drawtraymirrors(void)
 		if (!dstfmt)
 			continue;
 
+		dst = None;
+
+		tray_xerror = 0;
+		tray_rendering = 1;
+		XSetErrorHandler(xerror);
+
 		dst = XRenderCreatePicture(dpy, m->traymirror.win, dstfmt, 0, NULL);
+		XSync(dpy, False);
+
+		tray_rendering = 0;
+		XSetErrorHandler(xerror);
+
+		if (tray_xerror || !dst)
+			continue;
+
+		tray_xerror = 0;
+		tray_rendering = 1;
+		XSetErrorHandler(xerror);
 
 		XRenderColor clear = { 0, 0, 0, 0 };
 		XRenderFillRectangle(dpy, PictOpSrc, dst, &clear, 0, 0, wa.width, wa.height);
+		XSync(dpy, False);
 
-		for (i = systray->icons; i; i = i->next) {
-			if (!i->tags)
+		tray_rendering = 0;
+		XSetErrorHandler(xerror);
+
+		for (i = systray->icons; i; i = next) {
+			next = i->next;
+
+			if (!i->tags || !trayiconvalid(i))
 				continue;
 
 			refreshtrayiconmirror(i);
-			if (!i->tray_picture)
+
+			if (!i->tray_picture || !trayiconvalid(i))
 				continue;
+
+			tray_xerror = 0;
+			tray_rendering = 1;
+			XSetErrorHandler(xerror);
 
 			XRenderComposite(dpy, PictOpOver,
 			                 i->tray_picture, None, dst,
 			                 0, 0, 0, 0,
 			                 i->x, 0,
 			                 i->w, i->h);
+			XSync(dpy, False);
+
+			tray_rendering = 0;
+			XSetErrorHandler(xerror);
 		}
 
+		tray_xerror = 0;
+		tray_rendering = 1;
+		XSetErrorHandler(xerror);
+
 		XRenderFreePicture(dpy, dst);
+		XSync(dpy, False);
+
+		tray_rendering = 0;
+		XSetErrorHandler(xerror);
 	}
 
+	for (i = systray->icons; i; i = i->next) {
+		if (i->tags)
+			freetrayiconmirror(i);
+	}
+
+	XSetErrorHandler(xerrordummy);
+	XMapSubwindows(dpy, systray->win);
+
+	for (i = systray->icons; i; i = i->next) {
+		if (!i->tags || !trayiconvalid(i))
+			continue;
+
+		XMoveResizeWindow(dpy, i->win, i->x, 0, i->w, i->h);
+		XMapRaised(dpy, i->win);
+		XRaiseWindow(dpy, i->win);
+		configure(i);
+	}
+
+	XMapRaised(dpy, systray->win);
+	XRaiseWindow(dpy, systray->win);
+	XSync(dpy, False);
+	XSetErrorHandler(xerror);
+
+	tray_rendering = 0;
+	XSetErrorHandler(xerror);
 	XFlush(dpy);
+}
+
+int
+trayiconvalid(Client *i)
+{
+	XWindowAttributes wa;
+	int ok;
+
+	if (!i || !i->win)
+		return 0;
+
+	/*
+	 * Steam/Discord/etc. can destroy/recreate tray windows aggressively.
+	 * Probe the Window under the dummy error handler so BadWindow does not
+	 * murder dwm while mirror/damage state is still being cleaned up.
+	 */
+	XSetErrorHandler(xerrordummy);
+	ok = XGetWindowAttributes(dpy, i->win, &wa);
+	XSync(dpy, False);
+	XSetErrorHandler(xerror);
+
+	return ok != 0;
 }
 
 void
@@ -1238,91 +1393,202 @@ freetrayiconmirror(Client *i)
 	}
 
 	if (i->tray_picture) {
+		XSetErrorHandler(xerrordummy);
 		XRenderFreePicture(dpy, i->tray_picture);
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
 		i->tray_picture = None;
 	}
 
 	if (i->tray_pixmap) {
+		XSetErrorHandler(xerrordummy);
 		XFreePixmap(dpy, i->tray_pixmap);
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
 		i->tray_pixmap = None;
 	}
 
 	if (i->tray_redirected) {
-		XSetErrorHandler(xerrordummy);
-		XCompositeUnredirectWindow(dpy, i->win, CompositeRedirectAutomatic);
-		XSync(dpy, False);
-		XSetErrorHandler(xerror);
+		if (trayiconvalid(i)) {
+			XSetErrorHandler(xerrordummy);
+			XCompositeUnredirectWindow(dpy, i->win, CompositeRedirectManual);
+			XSync(dpy, False);
+			XSetErrorHandler(xerror);
+		}
 		i->tray_redirected = 0;
 	}
-
-	XSync(dpy, False);
 }
 
 void
 inittrayiconmirror(Client *i)
 {
-	XWindowAttributes wa;
-	XRenderPictFormat *fmt;
-
-	if (!i || !i->win)
-		return;
-
-	if (i->tray_picture) {
-		XRenderFreePicture(dpy, i->tray_picture);
-		i->tray_picture = None;
-	}
-	if (i->tray_pixmap) {
-		XFreePixmap(dpy, i->tray_pixmap);
-		i->tray_pixmap = None;
-	}
-
-	if (!XGetWindowAttributes(dpy, i->win, &wa))
-		return;
-	if (wa.map_state != IsViewable)
+	if (!i || !have_xdamage || !trayiconvalid(i))
 		return;
 
 	if (!i->tray_redirected) {
 		XSetErrorHandler(xerrordummy);
-		XCompositeRedirectWindow(dpy, i->win, CompositeRedirectAutomatic);
+		XCompositeRedirectWindow(dpy, i->win, CompositeRedirectManual);
 		XSync(dpy, False);
 		XSetErrorHandler(xerror);
+
 		i->tray_redirected = 1;
 	}
 
-	if (!XGetWindowAttributes(dpy, i->win, &wa))
-		return;
-	if (wa.map_state != IsViewable)
+	if (!i->tray_damage) {
+		XSetErrorHandler(xerrordummy);
+		i->tray_damage = XDamageCreate(dpy, i->win, XDamageReportNonEmpty);
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
+	}
+
+	refreshtrayiconmirror(i);
+}
+
+void
+refreshtrayiconmirror(Client *i)
+{
+	XRenderPictFormat *fmt;
+	XWindowAttributes wa;
+	Pixmap newpix = None;
+	Picture newpic = None;
+	Picture oldpic;
+	Pixmap oldpix;
+
+	if (!i || !have_xdamage)
 		return;
 
-	XSetErrorHandler(xerrordummy);
-	i->tray_pixmap = XCompositeNameWindowPixmap(dpy, i->win);
-	XSync(dpy, False);
-	XSetErrorHandler(xerror);
-
-	if (!i->tray_pixmap)
-		return;
-
-	fmt = XRenderFindVisualFormat(dpy, wa.visual);
-	if (!fmt) {
-		XFreePixmap(dpy, i->tray_pixmap);
-		i->tray_pixmap = None;
+	if (!trayiconvalid(i)) {
+		freetrayiconmirror(i);
 		return;
 	}
 
-	i->tray_picture = XRenderCreatePicture(dpy, i->tray_pixmap, fmt, 0, NULL);
+	XSetErrorHandler(xerrordummy);
+	if (!XGetWindowAttributes(dpy, i->win, &wa)) {
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
+		freetrayiconmirror(i);
+		return;
+	}
+	XSync(dpy, False);
+	XSetErrorHandler(xerror);
 
-	if (have_xdamage && !i->tray_damage) {
+	if (wa.width <= 0 || wa.height <= 0)
+		return;
+
+	/*
+	 * XCompositeNameWindowPixmap can BadMatch on non-viewable windows.
+	 * If this fails, do NOT use the returned Pixmap XID.
+	 */
+	if (wa.map_state != IsViewable)
+		return;
+
+	i->w = wa.width;
+	i->h = wa.height;
+
+	if (!i->tray_redirected) {
+		tray_xerror = 0;
+		tray_rendering = 1;
+		XSetErrorHandler(xerror);
+
+		XCompositeRedirectWindow(dpy, i->win, CompositeRedirectManual);
+		XSync(dpy, False);
+
+		tray_rendering = 0;
+		XSetErrorHandler(xerror);
+
+		if (tray_xerror) {
+			i->tray_redirected = 0;
+			return;
+		}
+
+		i->tray_redirected = 1;
+	}
+
+	if (!i->tray_damage) {
 		XSetErrorHandler(xerrordummy);
 		i->tray_damage = XDamageCreate(dpy, i->win, XDamageReportNonEmpty);
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
+	}
+
+	fmt = XRenderFindVisualFormat(dpy, wa.visual);
+	if (!fmt)
+		return;
+
+	tray_xerror = 0;
+	tray_rendering = 1;
+	XSetErrorHandler(xerror);
+
+	newpix = XCompositeNameWindowPixmap(dpy, i->win);
+	XSync(dpy, False);
+
+	tray_rendering = 0;
+	XSetErrorHandler(xerror);
+
+	if (tray_xerror || !newpix) {
+		/*
+		 * newpix may be an allocated client-side XID for a request that
+		 * failed server-side. Do not feed it into Render.
+		 */
+		return;
+	}
+
+	tray_xerror = 0;
+	tray_rendering = 1;
+	XSetErrorHandler(xerror);
+
+	newpic = XRenderCreatePicture(dpy, newpix, fmt, 0, NULL);
+	XSync(dpy, False);
+
+	tray_rendering = 0;
+	XSetErrorHandler(xerror);
+
+	if (tray_xerror || !newpic) {
+		XSetErrorHandler(xerrordummy);
+		if (newpix)
+			XFreePixmap(dpy, newpix);
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
+		return;
+	}
+
+	/*
+	 * Only swap after the entire new pixmap/picture chain succeeded.
+	 * This prevents poisoning i->tray_pixmap/i->tray_picture with bad XIDs.
+	 */
+	oldpic = i->tray_picture;
+	oldpix = i->tray_pixmap;
+
+	i->tray_picture = newpic;
+	i->tray_pixmap = newpix;
+
+	if (oldpic) {
+		XSetErrorHandler(xerrordummy);
+		XRenderFreePicture(dpy, oldpic);
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
+	}
+
+	if (oldpix) {
+		XSetErrorHandler(xerrordummy);
+		XFreePixmap(dpy, oldpix);
 		XSync(dpy, False);
 		XSetErrorHandler(xerror);
 	}
 }
 
 void
-refreshtrayiconmirror(Client *i)
+refreshsystray(void)
 {
-	inittrayiconmirror(i);
+	if (!showsystray || !systray)
+		return;
+
+	/*
+	 * Recompute real tray owner + mirrors.
+	 * This is needed because the real tray follows selmon,
+	 * while the mirrors are only valid for the previous owner layout.
+	 */
+	updatesystray(1);
 }
 
 void
@@ -1669,18 +1935,39 @@ void
 enternotify(XEvent *e)
 {
 	Client *c;
-	Monitor *m;
+	Monitor *m, *oldmon;
 	XCrossingEvent *ev = &e->xcrossing;
 
 	if ((ev->mode != NotifyNormal || ev->detail == NotifyInferior) && ev->window != root)
 		return;
+
 	c = wintoclient(ev->window);
 	m = c ? c->mon : wintomon(ev->window);
+
+	if (!m)
+		return;
+
+	oldmon = selmon;
+
 	if (m != selmon) {
 		unfocus(selmon->sel, 1);
 		selmon = m;
-	} else if (!c || c == selmon->sel)
+		focus(NULL);
+
+		/*
+		 * Tray follows the active monitor.
+		 * focusmon() handled keyboard monitor changes, but mouse enter
+		 * changes selmon here, so move the real tray + redraw mirrors.
+		 */
+		if (showsystray && oldmon != selmon)
+			updatesystray(1);
+
 		return;
+	}
+
+	if (!c || c == selmon->sel)
+		return;
+
 	focus(c);
 }
 
@@ -1741,24 +2028,22 @@ focusin(XEvent *e)
 void
 focusmon(const Arg *arg)
 {
-	Monitor *m, *oldsel, *oldowner, *newowner;
+	Monitor *m, *oldmon;
 
 	if (!mons->next)
 		return;
+
 	if ((m = dirtomon(arg->i)) == selmon)
 		return;
 
-	oldsel = selmon;
-	oldowner = systraytomon(oldsel);
+	oldmon = selmon;
 
 	unfocus(selmon->sel, 0);
 	selmon = m;
 	focus(NULL);
 
-	newowner = systraytomon(selmon);
-
-	if (showsystray && oldowner != newowner)
-		updatesystray(0);
+	if (showsystray && oldmon != selmon)
+		updatesystray(1);
 }
 
 void
@@ -1881,7 +2166,11 @@ getsystraywidth()
 
 	unsigned int w = 0;
 	Client *i;
-	for (i = systray->icons; i; w += i->w + systrayspacing, i = i->next);
+	for (i = systray->icons; i; i = i->next) {
+		if (!i->tags)
+			continue;
+		w += i->w + systrayspacing;
+	}
 	return w ? w + systrayspacing : 0;
 }
 
@@ -2742,14 +3031,21 @@ removesystrayicon(Client *i)
 {
 	Client **ii;
 
+	if (!systray || !i)
+		return;
+
 	freetrayiconmirror(i);
 
-	if (!showsystray || !i)
-		return;
-	for (ii = &systray->icons; *ii && *ii != i; ii = &(*ii)->next);
-	if (ii)
+	for (ii = &systray->icons; *ii && *ii != i; ii = &(*ii)->next)
+		;
+
+	if (*ii)
 		*ii = i->next;
+
+	i->next = NULL;
 	free(i);
+
+	updatesystray(1);
 }
 
 void
@@ -3734,7 +4030,6 @@ void
 unmapnotify(XEvent *e)
 {
 	Client *c;
-	Monitor *m;
 	XUnmapEvent *ev = &e->xunmap;
 
 	if ((c = wintoclient(ev->window))) {
@@ -3742,13 +4037,27 @@ unmapnotify(XEvent *e)
 			setclientstate(c, WithdrawnState);
 		else
 			unmanage(c, 0);
-	} else if ((m = wintomon(ev->window)) && m->barwin == ev->window)
-		unmanagealtbar(ev->window);
-	else if (showsystray && (c = wintosystrayicon(ev->window))) {
-		/* KLUDGE! sometimes icons occasionally unmap their windows, but do
-		 * _not_ destroy them. We map those windows back */
+		return;
+	}
+
+	if (showsystray && systray && (c = wintosystrayicon(ev->window))) {
+		/*
+		 * Do not remove tray icons on UnmapNotify.
+		 *
+		 * Steam/CEF/GTK tray icons can unmap/remap during login, menu
+		 * setup, monitor movement, Composite redirect/unredirect, etc.
+		 * DestroyNotify is the real removal path.
+		 */
+		c->tags = 1;
+
+		XSetErrorHandler(xerrordummy);
 		XMapRaised(dpy, c->win);
+		setclientstate(c, NormalState);
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
+
 		updatesystray(1);
+		return;
 	}
 }
 
@@ -3980,53 +4289,70 @@ updatestatus(void)
 void
 updatesystrayicongeom(Client *i, int w, int h)
 {
-	if (i) {
-		i->h = bh;
-		if (w == h)
+	if (!i)
+		return;
+
+	i->h = bh;
+
+	if (w == h)
+		i->w = bh;
+	else if (h == bh)
+		i->w = w;
+	else
+		i->w = (int)((float)bh * ((float)w / (float)h));
+
+	applysizehints(i, &(i->x), &(i->y), &(i->w), &(i->h), False);
+
+	if (i->h > bh) {
+		if (i->w == i->h)
 			i->w = bh;
-		else if (h == bh)
-			i->w = w;
 		else
-			i->w = (int) ((float)bh * ((float)w / (float)h));
-		applysizehints(i, &(i->x), &(i->y), &(i->w), &(i->h), False);
-		refreshtrayiconmirror(i);
-		/* force icons into the systray dimensions if they don't want to */
-		if (i->h > bh) {
-			if (i->w == i->h)
-				i->w = bh;
-			else
-				i->w = (int) ((float)bh * ((float)i->w / (float)i->h));
-			i->h = bh;
-		}
+			i->w = (int)((float)bh * ((float)i->w / (float)i->h));
+		i->h = bh;
 	}
+
+	if (i->w < 1)
+		i->w = bh;
+	if (i->h < 1)
+		i->h = bh;
 }
 
 void
 updatesystrayiconstate(Client *i, XPropertyEvent *ev)
 {
 	long flags;
-	int code = 0;
+	int code;
 
-	if (!showsystray || !i || ev->atom != xatom[XembedInfo] ||
-			!(flags = getatomprop(i, xatom[XembedInfo])))
+	if (!showsystray || !systray || !i || ev->atom != xatom[XembedInfo])
 		return;
 
-	if (flags & XEMBED_MAPPED && !i->tags) {
-		i->tags = 1;
+	flags = getatomprop(i, xatom[XembedInfo]);
+	i->tags = 1;
+
+	if (flags & XEMBED_MAPPED) {
 		code = XEMBED_WINDOW_ACTIVATE;
+
+		XSetErrorHandler(xerrordummy);
+		XMapRaised(dpy, i->win);
+		XRaiseWindow(dpy, i->win);
+		setclientstate(i, NormalState);
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
+	} else {
+		code = XEMBED_WINDOW_DEACTIVATE;
+
+		XSetErrorHandler(xerrordummy);
 		XMapRaised(dpy, i->win);
 		setclientstate(i, NormalState);
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
 	}
-	else if (!(flags & XEMBED_MAPPED) && i->tags) {
-		i->tags = 0;
-		code = XEMBED_WINDOW_DEACTIVATE;
-		XUnmapWindow(dpy, i->win);
-		setclientstate(i, WithdrawnState);
-	}
-	else
-		return;
-	sendevent(i->win, xatom[Xembed], StructureNotifyMask, CurrentTime, code, 0,
-			systray->win, XEMBED_EMBEDDED_VERSION);
+
+	sendevent(i->win, xatom[Xembed], StructureNotifyMask,
+	          CurrentTime, code, 0,
+	          systray->win, XEMBED_EMBEDDED_VERSION);
+
+	updatesystray(1);
 }
 
 void
@@ -4036,80 +4362,178 @@ updatesystray(int updatebar)
 	XWindowChanges wc;
 	Client *i;
 	Monitor *m = systraytomon(selmon);
-	if (!m) m = selmon;
-	unsigned int x = m->mx + m->mw;
-	unsigned int w = 1, xpad = 0, ypad = 0;
-	xpad = sp;
-	ypad = vp;
+	unsigned int w = 1;
+	int x, y, h;
 
 	if (!showsystray)
 		return;
+
+	if (!m)
+		m = selmon;
+	if (!m)
+		return;
+
+	h = bh;
+	y = m->by + vp;
+
 	if (!systray) {
-		/* init systray */
 		if (!(systray = (Systray *)calloc(1, sizeof(Systray))))
 			die("fatal: could not malloc() %u bytes\n", sizeof(Systray));
 
 		wa.override_redirect = True;
-		wa.event_mask = ButtonPressMask|ExposureMask;
+		wa.event_mask = ButtonPressMask | ExposureMask | SubstructureNotifyMask;
 		wa.background_pixel = 0;
 		wa.border_pixel = 0;
 		wa.colormap = cmap;
-		systray->win = XCreateWindow(dpy, root, x - xpad, m->by + ypad, w, bh, 0, depth,
-						InputOutput, visual,
-						CWOverrideRedirect|CWBackPixel|CWBorderPixel|CWColormap|CWEventMask, &wa);
+
+		systray->win = XCreateWindow(dpy, root,
+		                             m->wx + m->ww - 1, y,
+		                             1, h, 0,
+		                             depth, InputOutput, visual,
+		                             CWOverrideRedirect | CWBackPixel |
+		                             CWBorderPixel | CWColormap | CWEventMask,
+		                             &wa);
+
 		XSelectInput(dpy, systray->win, SubstructureNotifyMask);
-		XChangeProperty(dpy, systray->win, netatom[NetSystemTrayOrientation], XA_CARDINAL, 32,
-				PropModeReplace, (unsigned char *)&systrayorientation, 1);
-		XChangeProperty(dpy, systray->win, netatom[NetSystemTrayVisual], XA_VISUALID, 32,
-				PropModeReplace, (unsigned char *)&visual->visualid, 1);
-		XChangeProperty(dpy, systray->win, netatom[NetWMWindowType], XA_ATOM, 32,
-				PropModeReplace, (unsigned char *)&netatom[NetWMWindowTypeDock], 1);
+
+		XChangeProperty(dpy, systray->win,
+		                netatom[NetSystemTrayOrientation],
+		                XA_CARDINAL, 32, PropModeReplace,
+		                (unsigned char *)&systrayorientation, 1);
+
+		XChangeProperty(dpy, systray->win,
+		                netatom[NetSystemTrayVisual],
+		                XA_VISUALID, 32, PropModeReplace,
+		                (unsigned char *)&visual->visualid, 1);
+
+		XChangeProperty(dpy, systray->win,
+		                netatom[NetWMWindowType],
+		                XA_ATOM, 32, PropModeReplace,
+		                (unsigned char *)&netatom[NetWMWindowTypeDock], 1);
+
 		XMapRaised(dpy, systray->win);
 		XSetSelectionOwner(dpy, netatom[NetSystemTray], systray->win, CurrentTime);
+
 		if (XGetSelectionOwner(dpy, netatom[NetSystemTray]) == systray->win) {
-			sendevent(root, xatom[Manager], StructureNotifyMask, CurrentTime, netatom[NetSystemTray], systray->win, 0, 0);
+			sendevent(root, xatom[Manager], StructureNotifyMask,
+			          CurrentTime, netatom[NetSystemTray],
+			          systray->win, 0, 0);
 			XSync(dpy, False);
-		}
-		else {
+		} else {
 			fprintf(stderr, "dwm: unable to obtain system tray.\n");
+			XDestroyWindow(dpy, systray->win);
 			free(systray);
 			systray = NULL;
 			return;
 		}
 	}
 
-	for (w = 0, i = systray->icons; i; i = i->next) {
-		wa.background_pixel = 0;
-		XChangeWindowAttributes(dpy, i->win, CWBackPixel, &wa);
-		XMapRaised(dpy, i->win);
+	w = 0;
+	for (i = systray->icons; i; i = i->next) {
+		if (!i->tags || !trayiconvalid(i))
+			continue;
+
+		updatesystrayicongeom(i, i->w, i->h);
+
 		w += systrayspacing;
 		i->x = w;
-		XMoveResizeWindow(dpy, i->win, i->x, 0, i->w, i->h);
+		i->y = 0;
 		w += i->w;
+
 		if (i->mon != m)
 			i->mon = m;
 	}
-	w = w ? w + systrayspacing : 1;
-	x -= w;
-	XMoveResizeWindow(dpy, systray->win, x - xpad, m->by + ypad, w, bh);
-	wc.x = x - xpad;
-	wc.y = m->by + ypad;
-	wc.width = w;
-	wc.height = bh;
-	wc.stack_mode = Above; wc.sibling = m->barwin;
-	XConfigureWindow(dpy, systray->win, CWX|CWY|CWWidth|CWHeight|CWSibling|CWStackMode, &wc);
-	XMapWindow(dpy, systray->win);
-	XMapSubwindows(dpy, systray->win);
-	XSync(dpy, False);
 
-	for (i = systray->icons; i; i = i->next)
-		refreshtrayiconmirror(i);
+	w = w ? w + systrayspacing : 1;
+
+	if (!systrayonleft)
+		x = m->wx + m->ww - w - sp;
+	else
+		x = m->wx + sp;
+
+	XSetErrorHandler(xerrordummy);
+
+	XMoveResizeWindow(dpy, systray->win, x, y, MAX(1, w), h);
+
+	wc.x = x;
+	wc.y = y;
+	wc.width = MAX(1, w);
+	wc.height = h;
+	wc.stack_mode = Above;
+	wc.sibling = m->barwin;
+
+	XConfigureWindow(dpy, systray->win,
+	                 CWX | CWY | CWWidth | CWHeight | CWSibling | CWStackMode,
+	                 &wc);
+
+	XMapRaised(dpy, systray->win);
+	XRaiseWindow(dpy, systray->win);
+
+	XSync(dpy, False);
+	XSetErrorHandler(xerror);
+	for (i = systray->icons; i; i = i->next) {
+		if (!i->tags || !trayiconvalid(i))
+			continue;
+
+		wa.background_pixel = 0;
+
+		XSetErrorHandler(xerrordummy);
+
+		XChangeWindowAttributes(dpy, i->win, CWBackPixel, &wa);
+		XMoveResizeWindow(dpy, i->win, i->x, 0, i->w, i->h);
+		XMapRaised(dpy, i->win);
+		XRaiseWindow(dpy, i->win);
+
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
+	}
+
+	XSetErrorHandler(xerrordummy);
+	XMapSubwindows(dpy, systray->win);
+	XMapRaised(dpy, systray->win);
+	XRaiseWindow(dpy, systray->win);
+	XSync(dpy, False);
+	XSetErrorHandler(xerror);
 
 	if (updatebar)
 		drawbar(m);
 
 	placetraymirrors();
 	drawtraymirrors();
+
+	for (i = systray->icons; i; i = i->next) {
+		if (!i->tags)
+			continue;
+
+		freetrayiconmirror(i);
+	}
+
+	for (i = systray->icons; i; i = i->next) {
+		if (!i->tags || !trayiconvalid(i))
+			continue;
+
+		XSetErrorHandler(xerrordummy);
+
+		XMoveResizeWindow(dpy, i->win, i->x, 0, i->w, i->h);
+		XMapRaised(dpy, i->win);
+		XRaiseWindow(dpy, i->win);
+
+		/*
+		* Nudge clients that care about ConfigureNotify. This helps GTK-style tray icons
+		* repaint after being unredirected.
+		*/
+		configure(i);
+
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
+	}
+
+	XSetErrorHandler(xerrordummy);
+	XMapSubwindows(dpy, systray->win);
+	XMapRaised(dpy, systray->win);
+	XRaiseWindow(dpy, systray->win);
+	XSync(dpy, False);
+	XSetErrorHandler(xerror);
 }
 
 void
@@ -4305,6 +4729,21 @@ xerror(Display *dpy, XErrorEvent *ee)
 {
 	char buf[1024];
 
+	if (tray_rendering) {
+		tray_xerror = 1;
+		tray_xerror_code = ee->error_code;
+		tray_xerror_req = ee->request_code;
+		tray_xerror_minor = ee->minor_code;
+		tray_xerror_resource = ee->resourceid;
+
+		XGetErrorText(dpy, ee->error_code, buf, sizeof(buf));
+		fprintf(stderr,
+			"dwm: systray X error: req=%d code=%d (%s) resource=%lu minor=%d\n",
+			ee->request_code, ee->error_code, buf, ee->resourceid, ee->minor_code);
+		fflush(stderr);
+		return 0;
+	}
+
 	if (ee->error_code == BadWindow
 	|| (ee->request_code == X_SetInputFocus && ee->error_code == BadMatch)
 	|| (ee->request_code == X_PolyText8 && ee->error_code == BadDrawable)
@@ -4328,6 +4767,21 @@ xerror(Display *dpy, XErrorEvent *ee)
 int
 xerrordummy(Display *dpy, XErrorEvent *ee)
 {
+	if (tray_rendering) {
+		tray_xerror = 1;
+		tray_xerror_code = ee->error_code;
+		tray_xerror_req = ee->request_code;
+		tray_xerror_minor = ee->minor_code;
+		tray_xerror_resource = ee->resourceid;
+
+		char buf[1024];
+		XGetErrorText(dpy, ee->error_code, buf, sizeof(buf));
+		fprintf(stderr,
+			"dwm: systray X error: req=%d code=%d (%s) resource=%lu minor=%d\n",
+			ee->request_code, ee->error_code, buf, ee->resourceid, ee->minor_code);
+		fflush(stderr);
+		return 0;
+	}
 	return 0;
 }
 
