@@ -1215,10 +1215,13 @@ placetraymirrors(void)
 		m->traymirror.w = trayw;
 		m->traymirror.h = h;
 
+		XWindowChanges mwc;
+		mwc.x = x; mwc.y = y; mwc.width = trayw; mwc.height = bh;
+		mwc.stack_mode = Above; mwc.sibling = m->barwin;
 		XSetErrorHandler(xerrordummy);
-		XMoveResizeWindow(dpy, m->traymirror.win, x, y, trayw, h);
-		XMapRaised(dpy, m->traymirror.win);
-		XRaiseWindow(dpy, m->traymirror.win);
+		XConfigureWindow(dpy, m->traymirror.win,
+			CWX|CWY|CWWidth|CWHeight|CWSibling|CWStackMode, &mwc);
+		XMapWindow(dpy, m->traymirror.win);
 		XSync(dpy, False);
 		XSetErrorHandler(xerror);
 	}
@@ -1346,8 +1349,7 @@ drawtraymirrors(void)
 		configure(i);
 	}
 
-	XMapRaised(dpy, systray->win);
-	XRaiseWindow(dpy, systray->win);
+	XMapWindow(dpy, systray->win);
 	XSync(dpy, False);
 	XSetErrorHandler(xerror);
 
@@ -1384,13 +1386,9 @@ freetrayiconmirror(Client *i)
 	if (!i)
 		return;
 
-	if (i->tray_damage) {
-		XSetErrorHandler(xerrordummy);
-		XDamageDestroy(dpy, i->tray_damage);
-		XSync(dpy, False);
-		XSetErrorHandler(xerror);
-		i->tray_damage = None;
-	}
+	/* NOTE: tray_damage is intentionally kept alive here so that
+	 * XDamageNotify events continue to fire and mirrors stay updated.
+	 * Explicit destruction happens only in removesystrayicon(). */
 
 	if (i->tray_picture) {
 		XSetErrorHandler(xerrordummy);
@@ -3034,11 +3032,20 @@ removesystrayicon(Client *i)
 	if (!systray || !i)
 		return;
 
+	/* Destroy damage subscription here, since freetrayiconmirror
+	 * intentionally leaves it alive during normal render cycles. */
+	if (i->tray_damage) {
+		XSetErrorHandler(xerrordummy);
+		XDamageDestroy(dpy, i->tray_damage);
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
+		i->tray_damage = None;
+	}
+
 	freetrayiconmirror(i);
 
 	for (ii = &systray->icons; *ii && *ii != i; ii = &(*ii)->next)
 		;
-
 	if (*ii)
 		*ii = i->next;
 
@@ -4466,8 +4473,7 @@ updatesystray(int updatebar)
 	                 CWX | CWY | CWWidth | CWHeight | CWSibling | CWStackMode,
 	                 &wc);
 
-	XMapRaised(dpy, systray->win);
-	XRaiseWindow(dpy, systray->win);
+	XMapWindow(dpy, systray->win);
 
 	XSync(dpy, False);
 	XSetErrorHandler(xerror);
@@ -4490,8 +4496,7 @@ updatesystray(int updatebar)
 
 	XSetErrorHandler(xerrordummy);
 	XMapSubwindows(dpy, systray->win);
-	XMapRaised(dpy, systray->win);
-	XRaiseWindow(dpy, systray->win);
+	XMapWindow(dpy, systray->win);
 	XSync(dpy, False);
 	XSetErrorHandler(xerror);
 
@@ -4530,7 +4535,6 @@ updatesystray(int updatebar)
 
 	XSetErrorHandler(xerrordummy);
 	XMapSubwindows(dpy, systray->win);
-	XMapRaised(dpy, systray->win);
 	XRaiseWindow(dpy, systray->win);
 	XSync(dpy, False);
 	XSetErrorHandler(xerror);
