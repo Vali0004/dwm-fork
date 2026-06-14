@@ -1386,8 +1386,10 @@ freetrayiconmirror(Client *i)
 	if (!i)
 		return;
 
-	/* NOTE: tray_damage is intentionally kept alive here so that
-	 * XDamageNotify events continue to fire and mirrors stay updated.
+	/* NOTE: tray_damage and tray_redirected are intentionally kept alive here.
+	 * XDamageNotify events and the Composite redirect must persist between
+	 * render frames so mirrors stay updated without a redirect/unredirect
+	 * cycle that itself generates new damage and causes constant flashing.
 	 * Explicit destruction happens only in removesystrayicon(). */
 
 	if (i->tray_picture) {
@@ -1404,16 +1406,6 @@ freetrayiconmirror(Client *i)
 		XSync(dpy, False);
 		XSetErrorHandler(xerror);
 		i->tray_pixmap = None;
-	}
-
-	if (i->tray_redirected) {
-		if (trayiconvalid(i)) {
-			XSetErrorHandler(xerrordummy);
-			XCompositeUnredirectWindow(dpy, i->win, CompositeRedirectManual);
-			XSync(dpy, False);
-			XSetErrorHandler(xerror);
-		}
-		i->tray_redirected = 0;
 	}
 }
 
@@ -3032,8 +3024,6 @@ removesystrayicon(Client *i)
 	if (!systray || !i)
 		return;
 
-	/* Destroy damage subscription here, since freetrayiconmirror
-	 * intentionally leaves it alive during normal render cycles. */
 	if (i->tray_damage) {
 		XSetErrorHandler(xerrordummy);
 		XDamageDestroy(dpy, i->tray_damage);
@@ -3041,6 +3031,14 @@ removesystrayicon(Client *i)
 		XSetErrorHandler(xerror);
 		i->tray_damage = None;
 	}
+
+	if (i->tray_redirected && trayiconvalid(i)) {
+		XSetErrorHandler(xerrordummy);
+		XCompositeUnredirectWindow(dpy, i->win, CompositeRedirectManual);
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
+	}
+	i->tray_redirected = 0;
 
 	freetrayiconmirror(i);
 
