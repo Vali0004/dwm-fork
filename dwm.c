@@ -1083,6 +1083,16 @@ createmon(void)
 	return m;
 }
 
+static int
+mon_has_fullscreen(Monitor *m)
+{
+	Client *c;
+	for (c = m->clients; c; c = c->next)
+		if (ISVISIBLE(c) && c->isfullscreen)
+			return 1;
+	return 0;
+}
+
 void
 destroynotify(XEvent *e)
 {
@@ -1192,12 +1202,11 @@ placetraymirrors(void)
 		if (!m->traymirror.win)
 			createtraymirror(m);
 
-		if (!m->showbar || trayw == 0 || m == owner) {
+		if (!m->showbar || trayw == 0 || m == owner || mon_has_fullscreen(m)) {
 			XSetErrorHandler(xerrordummy);
 			XUnmapWindow(dpy, m->traymirror.win);
 			XSync(dpy, False);
 			XSetErrorHandler(xerror);
-
 			m->traymirror.x = m->traymirror.y = 0;
 			m->traymirror.w = m->traymirror.h = 0;
 			continue;
@@ -1233,9 +1242,6 @@ drawtraymirrors(void)
 	Monitor *m, *owner;
 	Client *i, *next;
 	unsigned int trayw;
-	Picture dst;
-	XRenderPictFormat *dstfmt;
-	XWindowAttributes wa;
 
 	if (!showsystray || !systray || !systray->win)
 		return;
@@ -1245,90 +1251,74 @@ drawtraymirrors(void)
 	if (trayw == 0)
 		return;
 
-	for (m = mons; m; m = m->next) {
-		if (m == owner)
-			continue;
+	/* Refresh all icon pixmaps once up front */
+	for (i = systray->icons; i; i = i->next) {
+		if (i->tags && trayiconvalid(i))
+			refreshtrayiconmirror(i);
+	}
 
-		if (!m->showbar || !m->traymirror.win)
-			continue;
+	for (m = mons; m; m = m->next) {
+		Window dest_win;
+		XWindowAttributes wa;
+		Picture dst;
+		XRenderPictFormat *dstfmt;
+
+		if (m == owner) {
+			if (!m->showbar)
+				continue;
+			dest_win = systray->win;
+		} else {
+			if (!m->showbar || !m->traymirror.win)
+				continue;
+			dest_win = m->traymirror.win;
+		}
 
 		XSetErrorHandler(xerrordummy);
-		if (!XGetWindowAttributes(dpy, m->traymirror.win, &wa)) {
-			XSync(dpy, False);
-			XSetErrorHandler(xerror);
-			continue;
-		}
+		int ok = XGetWindowAttributes(dpy, dest_win, &wa);
 		XSync(dpy, False);
 		XSetErrorHandler(xerror);
+		if (!ok)
+			continue;
 
-		if (wa.map_state != IsViewable)
+		if (m != owner && wa.map_state != IsViewable)
 			continue;
 
 		dstfmt = XRenderFindVisualFormat(dpy, wa.visual);
 		if (!dstfmt)
 			continue;
 
-		dst = None;
-
-		tray_xerror = 0;
-		tray_rendering = 1;
-		XSetErrorHandler(xerror);
-
-		dst = XRenderCreatePicture(dpy, m->traymirror.win, dstfmt, 0, NULL);
+		tray_xerror = 0; tray_rendering = 1; XSetErrorHandler(xerror);
+		dst = XRenderCreatePicture(dpy, dest_win, dstfmt, 0, NULL);
 		XSync(dpy, False);
-
-		tray_rendering = 0;
-		XSetErrorHandler(xerror);
+		tray_rendering = 0; XSetErrorHandler(xerror);
 
 		if (tray_xerror || !dst)
 			continue;
 
-		tray_xerror = 0;
-		tray_rendering = 1;
-		XSetErrorHandler(xerror);
-
+		tray_xerror = 0; tray_rendering = 1; XSetErrorHandler(xerror);
 		XRenderColor clear = { 0, 0, 0, 0 };
 		XRenderFillRectangle(dpy, PictOpSrc, dst, &clear, 0, 0, wa.width, wa.height);
 		XSync(dpy, False);
-
-		tray_rendering = 0;
-		XSetErrorHandler(xerror);
+		tray_rendering = 0; XSetErrorHandler(xerror);
 
 		for (i = systray->icons; i; i = next) {
 			next = i->next;
-
-			if (!i->tags || !trayiconvalid(i))
+			if (!i->tags || !trayiconvalid(i) || !i->tray_picture)
 				continue;
 
-			refreshtrayiconmirror(i);
-
-			if (!i->tray_picture || !trayiconvalid(i))
-				continue;
-
-			tray_xerror = 0;
-			tray_rendering = 1;
-			XSetErrorHandler(xerror);
-
+			tray_xerror = 0; tray_rendering = 1; XSetErrorHandler(xerror);
 			XRenderComposite(dpy, PictOpOver,
 			                 i->tray_picture, None, dst,
 			                 0, 0, 0, 0,
-			                 i->x, 0,
-			                 i->w, i->h);
+			                 i->x, 0, i->w, i->h);
 			XSync(dpy, False);
-
-			tray_rendering = 0;
-			XSetErrorHandler(xerror);
+			tray_rendering = 0; XSetErrorHandler(xerror);
 		}
 
-		tray_xerror = 0;
-		tray_rendering = 1;
-		XSetErrorHandler(xerror);
-
+		tray_xerror = 0; tray_rendering = 1; XSetErrorHandler(xerror);
 		XRenderFreePicture(dpy, dst);
 		XSync(dpy, False);
-
-		tray_rendering = 0;
-		XSetErrorHandler(xerror);
+		tray_rendering = 0; XSetErrorHandler(xerror);
 	}
 
 	for (i = systray->icons; i; i = i->next) {
@@ -1338,22 +1328,15 @@ drawtraymirrors(void)
 
 	XSetErrorHandler(xerrordummy);
 	XMapSubwindows(dpy, systray->win);
-
 	for (i = systray->icons; i; i = i->next) {
 		if (!i->tags || !trayiconvalid(i))
 			continue;
-
 		XMoveResizeWindow(dpy, i->win, i->x, 0, i->w, i->h);
 		XMapRaised(dpy, i->win);
-		XRaiseWindow(dpy, i->win);
 		configure(i);
 	}
-
 	XMapWindow(dpy, systray->win);
 	XSync(dpy, False);
-	XSetErrorHandler(xerror);
-
-	tray_rendering = 0;
 	XSetErrorHandler(xerror);
 	XFlush(dpy);
 }
@@ -4460,21 +4443,26 @@ updatesystray(int updatebar)
 
 	XMoveResizeWindow(dpy, systray->win, x, y, MAX(1, w), h);
 
-	wc.x = x;
-	wc.y = y;
-	wc.width = MAX(1, w);
-	wc.height = h;
-	wc.stack_mode = Above;
-	wc.sibling = m->barwin;
+	if (mon_has_fullscreen(m)) {
+		XSetErrorHandler(xerrordummy);
+		XUnmapWindow(dpy, systray->win);
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
+	} else {
+		wc.x = x;
+		wc.y = y;
+		wc.width = MAX(1, w);
+		wc.height = h;
+		wc.stack_mode = Above;
+		wc.sibling = m->barwin;
+		XSetErrorHandler(xerrordummy);
+		XConfigureWindow(dpy, systray->win,
+		                 CWX|CWY|CWWidth|CWHeight|CWSibling|CWStackMode, &wc);
+		XMapWindow(dpy, systray->win);
+		XSync(dpy, False);
+		XSetErrorHandler(xerror);
+	}
 
-	XConfigureWindow(dpy, systray->win,
-	                 CWX | CWY | CWWidth | CWHeight | CWSibling | CWStackMode,
-	                 &wc);
-
-	XMapWindow(dpy, systray->win);
-
-	XSync(dpy, False);
-	XSetErrorHandler(xerror);
 	for (i = systray->icons; i; i = i->next) {
 		if (!i->tags || !trayiconvalid(i))
 			continue;
