@@ -70,7 +70,7 @@ static const Rule rules[] = {
 	{ "Alacritty",         "Alacritty",      "vim",                   0,            0,           -1,        ""  },
 	{ "discord",           "discord",        NULL,                    0,            0,           -1,        ""  },
 	{ "Cider",             "cider",          NULL,                    0,            0,           -1,        "󰝚"  },
-	{ "Code",              "code",           NULL,                    0,            0,           -1,        "󰨞"  },
+	{ "code",              "code",           NULL,                    0,            0,           -1,        "󰨞"  },
 	{ "Google-chrome",     "google-chrome",  NULL,                    0,            0,           -1,        ""  },
 	{ "mpv",               "mpvk",           NULL,                    0,            0,           -1,        ""  },
 	{ "Spotify",           "spotify",        NULL,                    0,            0,           -1,        "󰓇"  },
