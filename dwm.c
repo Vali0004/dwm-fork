@@ -294,6 +294,7 @@ static void tagclient(const Arg *arg);
 static void quit(const Arg *arg);
 static Monitor *recttomon(int x, int y, int w, int h);
 static void removesystrayicon(Client *i);
+static void reparentnotify(XEvent *e);
 static void resize(Client *c, int x, int y, int w, int h, int interact);
 static void resizebarwin(Monitor *m);
 static void resizeclient(Client *c, int x, int y, int w, int h);
@@ -403,6 +404,7 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 	[MapRequest] = maprequest,
 	[MotionNotify] = motionnotify,
 	[PropertyNotify] = propertynotify,
+	[ReparentNotify] = reparentnotify,
 	[ResizeRequest] = resizerequest,
 	[UnmapNotify] = unmapnotify
 };
@@ -2454,9 +2456,11 @@ maprequest(XEvent *e)
 
 	Client *i;
 	if (showsystray && (i = wintosystrayicon(ev->window))) {
-		sendevent(i->win, netatom[Xembed], StructureNotifyMask, CurrentTime, XEMBED_WINDOW_ACTIVATE, 0, systray->win, XEMBED_EMBEDDED_VERSION);
+		sendevent(i->win, xatom[Xembed], StructureNotifyMask, CurrentTime, XEMBED_WINDOW_ACTIVATE, 0, systray->win, XEMBED_EMBEDDED_VERSION);
 		refreshtrayiconmirror(i);
 		updatesystray(1);
+		/* a tray icon must never also become a managed client */
+		return;
 	}
 
 	if (!XGetWindowAttributes(dpy, ev->window, &wa))
@@ -3079,6 +3083,18 @@ removesystrayicon(Client *i)
 	free(i);
 
 	updatesystray(1);
+}
+
+void
+reparentnotify(XEvent *e)
+{
+	XReparentEvent *ev = &e->xreparent;
+	Client *i;
+
+	/* xembed undock moves the icon back to root, drop it before it maps there */
+	if (showsystray && systray && ev->parent != systray->win
+	    && (i = wintosystrayicon(ev->window)))
+		removesystrayicon(i);
 }
 
 void
