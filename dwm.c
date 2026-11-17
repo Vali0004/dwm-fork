@@ -1640,6 +1640,8 @@ drawstatusbar(Monitor *m, int bw, int bh, char *stext)
 
 				if (text[++i] == 'f') {
 					w += atoi(text + ++i);
+				} else if (!text[i]) {
+					break;
 				}
 			} else {
 				is_code = 0;
@@ -1678,12 +1680,18 @@ drawstatusbar(Monitor *m, int bw, int bh, char *stext)
 			while (text[++i] && text[i] != '^') {
 				if (text[i] == 'c' || text[i] == 'b') {
 					char buf[8] = {0};
-					memcpy(buf, text + i + 1, 7);
-					if (text[i] == 'c')
-						drw_clr_create(drw, &drw->scheme[ColFg], buf, alphas[SchemeNorm][ColFg]);
-					else
-						drw_clr_create(drw, &drw->scheme[ColBg], buf, alphas[SchemeNorm][ColBg]);
-					i += 7;
+					int n = 0;
+					/* stop at the terminator, a cut off code must not skip past it */
+					while (n < 7 && text[i + 1 + n])
+						n++;
+					memcpy(buf, text + i + 1, n);
+					if (n == 7) {
+						if (text[i] == 'c')
+							drw_clr_create(drw, &drw->scheme[ColFg], buf, alphas[SchemeNorm][ColFg]);
+						else
+							drw_clr_create(drw, &drw->scheme[ColBg], buf, alphas[SchemeNorm][ColBg]);
+					}
+					i += n;
 				} else if (text[i] == 'd') {
 					drw->scheme[ColFg] = scheme[SchemeNorm][ColFg];
 					drw->scheme[ColBg] = scheme[SchemeNorm][ColBg];
@@ -1700,6 +1708,12 @@ drawstatusbar(Monitor *m, int bw, int bh, char *stext)
 				} else if (text[i] == 'f') {
 					x += atoi(text + ++i);
 				}
+			}
+
+			/* unterminated code, nothing left to draw */
+			if (!text[i]) {
+				text += i;
+				break;
 			}
 
 			text += i + 1;
