@@ -249,6 +249,7 @@ static void drawtraymirrors(void);
 static void inittrayiconmirror(Client *i);
 static void freetrayiconmirror(Client *i);
 static int trayiconvalid(Client *i);
+static int trayiconwantsmap(Client *i);
 static void refreshtrayiconmirror(Client *i);
 static void refreshsystray(void);
 static void detach(Client *c);
@@ -1365,6 +1366,28 @@ trayiconvalid(Client *i)
 	XSetErrorHandler(xerror);
 
 	return ok != 0;
+}
+
+/* xembed: the icon picks its own visibility, a missing _XEMBED_INFO means mapped */
+int
+trayiconwantsmap(Client *i)
+{
+	int di;
+	unsigned long n, extra;
+	unsigned char *p = NULL;
+	Atom da;
+	int mapped = 1;
+
+	XSetErrorHandler(xerrordummy);
+	if (XGetWindowProperty(dpy, i->win, xatom[XembedInfo], 0L, 2L, False,
+	    xatom[XembedInfo], &da, &di, &n, &extra, &p) == Success && p) {
+		if (n == 2)
+			mapped = (((long *)p)[1] & XEMBED_MAPPED) != 0;
+		XFree(p);
+	}
+	XSync(dpy, False);
+	XSetErrorHandler(xerror);
+	return mapped;
 }
 
 void
@@ -4051,13 +4074,14 @@ unmapnotify(XEvent *e)
 	}
 
 	if (showsystray && systray && (c = wintosystrayicon(ev->window))) {
-		/*
-		 * Do not remove tray icons on UnmapNotify.
-		 *
-		 * Steam/CEF/GTK tray icons can unmap/remap during login, menu
-		 * setup, monitor movement, Composite redirect/unredirect, etc.
-		 * DestroyNotify is the real removal path.
-		 */
+		/* steam/cef icons unmap while still flagged XEMBED_MAPPED, remap those
+		 * an icon that cleared the flag wants to hide, forcing it up makes it flicker */
+		if (!trayiconwantsmap(c)) {
+			c->tags = 0;
+			updatesystray(1);
+			return;
+		}
+
 		c->tags = 1;
 
 		XSetErrorHandler(xerrordummy);
@@ -4337,10 +4361,10 @@ updatesystrayiconstate(Client *i, XPropertyEvent *ev)
 		return;
 
 	flags = getatomprop(i, xatom[XembedInfo]);
-	i->tags = 1;
 
 	if (flags & XEMBED_MAPPED) {
 		code = XEMBED_WINDOW_ACTIVATE;
+		i->tags = 1;
 
 		XSetErrorHandler(xerrordummy);
 		XMapRaised(dpy, i->win);
@@ -4350,10 +4374,12 @@ updatesystrayiconstate(Client *i, XPropertyEvent *ev)
 		XSetErrorHandler(xerror);
 	} else {
 		code = XEMBED_WINDOW_DEACTIVATE;
+		i->tags = 0;
 
+		/* the icon asked to be hidden, honor it */
 		XSetErrorHandler(xerrordummy);
-		XMapRaised(dpy, i->win);
-		setclientstate(i, NormalState);
+		XUnmapWindow(dpy, i->win);
+		setclientstate(i, WithdrawnState);
 		XSync(dpy, False);
 		XSetErrorHandler(xerror);
 	}
