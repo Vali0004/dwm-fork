@@ -2294,6 +2294,7 @@ handlexevent(struct epoll_event *evp)
 {
 	if (evp->events & EPOLLIN) {
 		XEvent ev;
+		int traydirty = 0;
 
 		while (running && XPending(dpy)) {
 			XNextEvent(dpy, &ev);
@@ -2313,7 +2314,8 @@ handlexevent(struct epoll_event *evp)
 					XSync(dpy, False);
 					XSetErrorHandler(xerror);
 
-					drawtraymirrors();
+					/* redraw once after the queue drains, not per damage event */
+					traydirty = 1;
 					break;
 				}
 				continue;
@@ -2324,6 +2326,9 @@ handlexevent(struct epoll_event *evp)
 				ipc_send_events(mons, &lastselmon, selmon);
 			}
 		}
+
+		if (traydirty && running)
+			drawtraymirrors();
 	} else if (evp->events & EPOLLHUP) {
 		return -1;
 	}
