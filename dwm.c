@@ -153,6 +153,7 @@ struct Client {
 	Pixmap tray_pixmap;
 	Picture tray_picture;
 	Damage tray_damage;
+	int tray_px, tray_pw, tray_ph, tray_placed;
 };
 
 typedef struct {
@@ -250,6 +251,7 @@ static void inittrayiconmirror(Client *i);
 static void freetrayiconmirror(Client *i);
 static int trayiconvalid(Client *i);
 static int trayiconwantsmap(Client *i);
+static void placetrayicon(Client *i);
 static void refreshtrayiconmirror(Client *i);
 static void refreshsystray(void);
 static void detach(Client *c);
@@ -903,7 +905,8 @@ clientmessage(XEvent *e)
 			             StructureNotifyMask | PropertyChangeMask | ResizeRedirectMask);
 			XReparentWindow(dpy, c->win, systray->win, 0, 0);
 
-			swa.background_pixel = scheme[SchemeNorm][ColBg].pixel;
+			/* transparent, updatesystray used to reset this on every redraw */
+			swa.background_pixel = 0;
 			XChangeWindowAttributes(dpy, c->win, CWBackPixel, &swa);
 
 			XSync(dpy, False);
@@ -1333,18 +1336,11 @@ drawtraymirrors(void)
 			freetrayiconmirror(i);
 	}
 
-	XSetErrorHandler(xerrordummy);
-	XMapSubwindows(dpy, systray->win);
 	for (i = systray->icons; i; i = i->next) {
 		if (!i->tags || !trayiconvalid(i))
 			continue;
-		XMoveResizeWindow(dpy, i->win, i->x, 0, i->w, i->h);
-		XMapRaised(dpy, i->win);
-		configure(i);
+		placetrayicon(i);
 	}
-	XMapWindow(dpy, systray->win);
-	XSync(dpy, False);
-	XSetErrorHandler(xerror);
 	XFlush(dpy);
 }
 
@@ -1390,6 +1386,28 @@ trayiconwantsmap(Client *i)
 	XSync(dpy, False);
 	XSetErrorHandler(xerror);
 	return mapped;
+}
+
+/* touch the icon only on real changes, a no-op configure makes wine repaint
+ * which raises damage and loops back into drawtraymirrors */
+void
+placetrayicon(Client *i)
+{
+	XWindowAttributes wa;
+
+	XSetErrorHandler(xerrordummy);
+	if (!i->tray_placed || i->tray_px != i->x || i->tray_pw != i->w || i->tray_ph != i->h) {
+		XMoveResizeWindow(dpy, i->win, i->x, 0, i->w, i->h);
+		configure(i);
+		i->tray_px = i->x;
+		i->tray_pw = i->w;
+		i->tray_ph = i->h;
+		i->tray_placed = 1;
+	}
+	if (XGetWindowAttributes(dpy, i->win, &wa) && wa.map_state == IsUnmapped)
+		XMapRaised(dpy, i->win);
+	XSync(dpy, False);
+	XSetErrorHandler(xerror);
 }
 
 void
@@ -4531,24 +4549,8 @@ updatesystray(int updatebar)
 		if (!i->tags || !trayiconvalid(i))
 			continue;
 
-		wa.background_pixel = 0;
-
-		XSetErrorHandler(xerrordummy);
-
-		XChangeWindowAttributes(dpy, i->win, CWBackPixel, &wa);
-		XMoveResizeWindow(dpy, i->win, i->x, 0, i->w, i->h);
-		XMapRaised(dpy, i->win);
-		XRaiseWindow(dpy, i->win);
-
-		XSync(dpy, False);
-		XSetErrorHandler(xerror);
+		placetrayicon(i);
 	}
-
-	XSetErrorHandler(xerrordummy);
-	XMapSubwindows(dpy, systray->win);
-	XMapWindow(dpy, systray->win);
-	XSync(dpy, False);
-	XSetErrorHandler(xerror);
 
 	if (updatebar)
 		drawbar(m);
@@ -4567,24 +4569,10 @@ updatesystray(int updatebar)
 		if (!i->tags || !trayiconvalid(i))
 			continue;
 
-		XSetErrorHandler(xerrordummy);
-
-		XMoveResizeWindow(dpy, i->win, i->x, 0, i->w, i->h);
-		XMapRaised(dpy, i->win);
-		XRaiseWindow(dpy, i->win);
-
-		/*
-		* Nudge clients that care about ConfigureNotify. This helps GTK-style tray icons
-		* repaint after being unredirected.
-		*/
-		configure(i);
-
-		XSync(dpy, False);
-		XSetErrorHandler(xerror);
+		placetrayicon(i);
 	}
 
 	XSetErrorHandler(xerrordummy);
-	XMapSubwindows(dpy, systray->win);
 	XRaiseWindow(dpy, systray->win);
 	XSync(dpy, False);
 	XSetErrorHandler(xerror);
