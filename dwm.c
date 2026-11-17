@@ -3023,6 +3023,13 @@ removesystrayicon(Client *i)
 	if (!systray || !i)
 		return;
 
+	/* not in the list means already freed, freeing again corrupts the heap */
+	for (ii = &systray->icons; *ii && *ii != i; ii = &(*ii)->next)
+		;
+	if (!*ii)
+		return;
+	*ii = i->next;
+
 	if (i->tray_damage) {
 		XSetErrorHandler(xerrordummy);
 		XDamageDestroy(dpy, i->tray_damage);
@@ -3040,11 +3047,6 @@ removesystrayicon(Client *i)
 	i->tray_redirected = 0;
 
 	freetrayiconmirror(i);
-
-	for (ii = &systray->icons; *ii && *ii != i; ii = &(*ii)->next)
-		;
-	if (*ii)
-		*ii = i->next;
 
 	i->next = NULL;
 	free(i);
