@@ -847,6 +847,10 @@ clientmessage(XEvent *e)
 
 	if (showsystray && systray && cme->window == systray->win && cme->message_type == netatom[NetSystemTrayOP]) {
 		if (cme->data.l[1] == SYSTEM_TRAY_REQUEST_DOCK) {
+			/* a repeated dock would add a second entry that goes stale */
+			if (wintosystrayicon(cme->data.l[2]))
+				return;
+
 			if (!(c = (Client *)calloc(1, sizeof(Client))))
 				die("fatal: could not malloc() %u bytes\n", sizeof(Client));
 
