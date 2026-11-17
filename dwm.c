@@ -1305,9 +1305,12 @@ drawtraymirrors(void)
 		if (tray_xerror || !dst)
 			continue;
 
+		/* build the frame offscreen, clearing the visible window first flickers */
 		tray_xerror = 0; tray_rendering = 1; XSetErrorHandler(xerror);
+		Pixmap backpix = XCreatePixmap(dpy, dest_win, wa.width, wa.height, wa.depth);
+		Picture back = XRenderCreatePicture(dpy, backpix, dstfmt, 0, NULL);
 		XRenderColor clear = { 0, 0, 0, 0 };
-		XRenderFillRectangle(dpy, PictOpSrc, dst, &clear, 0, 0, wa.width, wa.height);
+		XRenderFillRectangle(dpy, PictOpSrc, back, &clear, 0, 0, wa.width, wa.height);
 		XSync(dpy, False);
 		tray_rendering = 0; XSetErrorHandler(xerror);
 
@@ -1318,7 +1321,7 @@ drawtraymirrors(void)
 
 			tray_xerror = 0; tray_rendering = 1; XSetErrorHandler(xerror);
 			XRenderComposite(dpy, PictOpOver,
-			                 i->tray_picture, None, dst,
+			                 i->tray_picture, None, back,
 			                 0, 0, 0, 0,
 			                 i->x, 0, i->w, i->h);
 			XSync(dpy, False);
@@ -1326,6 +1329,10 @@ drawtraymirrors(void)
 		}
 
 		tray_xerror = 0; tray_rendering = 1; XSetErrorHandler(xerror);
+		XRenderComposite(dpy, PictOpSrc, back, None, dst,
+		                 0, 0, 0, 0, 0, 0, wa.width, wa.height);
+		XRenderFreePicture(dpy, back);
+		XFreePixmap(dpy, backpix);
 		XRenderFreePicture(dpy, dst);
 		XSync(dpy, False);
 		tray_rendering = 0; XSetErrorHandler(xerror);
