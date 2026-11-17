@@ -1762,7 +1762,9 @@ applyappicon(char *tag_icons[], int *icons_per_tag, const Client *c)
 	for (unsigned t = 1, i = 0; i < LENGTH(tags); t <<= 1, i++)  {
 		if (c->tags & t) {
 			if (icons_per_tag[i] == 0) {
-				strncpy(tag_icons[i], c->appicon, strlen(c->appicon) + 1);
+				/* tag name buffer is too small for the icon, swap it */
+				free(tag_icons[i]);
+				tag_icons[i] = strdup(c->appicon);
 			} else {
 				char *icon = NULL;
 				if (icons_per_tag[i] < truncate_icons_after)
